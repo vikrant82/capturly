@@ -1,0 +1,48 @@
+"""Command-line interface for Capturly."""
+
+import argparse
+
+from . import server
+
+
+def main(argv=None):
+    """Parse command-line options and run the Capturly server."""
+    parser = argparse.ArgumentParser(
+        description="Record/replay mock server for performance testing"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["record", "replay", "hybrid", "log"],
+        default="replay",
+        help="Mode: record (proxy + cache), replay (saved responses), hybrid (cache-through), or log (proxy + full req/res logs)",
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        help="Backend URL for RECORD/HYBRID/LOG modes (e.g., https://adoption-backend...)",
+    )
+    parser.add_argument(
+        "--port", type=int, default=9999, help="Port to listen on (default: 9999)"
+    )
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=0,
+        help="Delay in milliseconds before replayed responses in REPLAY and HYBRID cache-hit mode (default: 0)",
+    )
+    parser.add_argument(
+        "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--combine-chunks",
+        action="store_true",
+        help="In LOG mode, combine OpenAI-style SSE chunks into one final traffic log response",
+    )
+    args = parser.parse_args(argv)
+
+    if args.mode in ("record", "hybrid", "log") and not args.backend:
+        parser.error("--backend is required in RECORD, HYBRID, and LOG modes")
+    if args.delay < 0:
+        parser.error("--delay must be a non-negative integer")
+
+    server.run_server(args)
