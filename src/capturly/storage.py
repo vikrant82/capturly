@@ -8,7 +8,27 @@ import time
 
 from . import utils
 
-RECORDINGS_DIR = os.path.join(os.path.dirname(__file__), "mock-recordings")
+RECORDINGS_DIR = None
+
+
+def get_recordings_dir():
+    """Get the recordings directory, creating it if needed.
+
+    Priority:
+    1. CAPTURLY_RECORDINGS_DIR environment variable
+    2. ./capturly-recordings in current working directory
+    """
+    global RECORDINGS_DIR
+
+    if RECORDINGS_DIR is None:
+        env_dir = os.environ.get("CAPTURLY_RECORDINGS_DIR")
+        if env_dir:
+            RECORDINGS_DIR = env_dir
+        else:
+            RECORDINGS_DIR = os.path.join(os.getcwd(), "capturly-recordings")
+
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    return RECORDINGS_DIR
 NON_CACHEABLE_STATUS_CODES = {504}
 
 
@@ -40,9 +60,9 @@ def save_recording(handler, method, path, body, status_code, headers, response_b
         handler.log_message(f"⏭️ Skipping recording for non-cacheable status: {status_code}")
         return
 
-    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    recordings_dir = get_recordings_dir()
     cache_key = get_cache_key(method, path, body)
-    recording_file = os.path.join(RECORDINGS_DIR, f"{cache_key}.json")
+    recording_file = os.path.join(recordings_dir, f"{cache_key}.json")
     response_str, body_encoding = utils.decode_or_base64(response_body)
 
     recording = {
@@ -66,7 +86,7 @@ def save_recording(handler, method, path, body, status_code, headers, response_b
 
 def read_traffic_log_entries():
     """Read current traffic-log entries from disk."""
-    log_file = os.path.join(RECORDINGS_DIR, "traffic_log.json")
+    log_file = os.path.join(get_recordings_dir(), "traffic_log.json")
     if not os.path.exists(log_file):
         return []
 
@@ -79,7 +99,7 @@ def read_traffic_log_entries():
 
 def write_traffic_log_entries(entries):
     """Atomically publish traffic-log JSON entries."""
-    log_file = os.path.join(RECORDINGS_DIR, "traffic_log.json")
+    log_file = os.path.join(get_recordings_dir(), "traffic_log.json")
     atomic_write_json(log_file, entries, ensure_ascii=False, indent=2)
 
 

@@ -1,6 +1,7 @@
 """Command-line interface for Capturly."""
 
 import argparse
+import os
 
 from . import server
 
@@ -38,7 +39,15 @@ def main(argv=None):
         action="store_true",
         help="In LOG mode, combine OpenAI-style SSE chunks into one final traffic log response",
     )
+    parser.add_argument(
+        "--recordings-dir",
+        type=str,
+        help="Directory for recordings (default: ./capturly-recordings or CAPTURLY_RECORDINGS_DIR)",
+    )
     args = parser.parse_args(argv)
+
+    if args.recordings_dir:
+        os.environ["CAPTURLY_RECORDINGS_DIR"] = args.recordings_dir
 
     if args.mode in ("record", "hybrid", "log") and not args.backend:
         parser.error("--backend is required in RECORD, HYBRID, and LOG modes")

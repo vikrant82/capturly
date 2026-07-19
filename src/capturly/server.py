@@ -6,7 +6,7 @@ from socketserver import ThreadingMixIn
 
 from .handler import MockServiceHandler
 from .logger import AsyncTrafficLogger
-from .storage import RECORDINGS_DIR
+from . import storage
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -23,9 +23,9 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 def _recordings_count():
     """Count JSON recordings already available to replay or hybrid mode."""
-    if not os.path.exists(RECORDINGS_DIR):
+    if not os.path.exists(storage.get_recordings_dir()):
         return 0
-    return len([f for f in os.listdir(RECORDINGS_DIR) if f.endswith(".json")])
+    return len([f for f in os.listdir(storage.get_recordings_dir()) if f.endswith(".json")])
 
 
 def run_server(args):
@@ -45,23 +45,23 @@ def run_server(args):
     )
     if args.mode == "record":
         print(f"📡 Proxying to: {args.backend}")
-        print(f"💾 Recordings will be saved to: {RECORDINGS_DIR}")
+        print(f"💾 Recordings will be saved to: {storage.get_recordings_dir()}")
         if args.delay > 0:
             print(f"⏱️ Replay delay configured ({args.delay}ms) but ignored in RECORD mode")
     elif args.mode == "log":
         print(f"📡 Proxying to: {args.backend}")
-        print(f"📝 Full request/response logs will be saved to: {RECORDINGS_DIR}")
+        print(f"📝 Full request/response logs will be saved to: {storage.get_recordings_dir()}")
         print(f"🧩 SSE chunk combining: {'enabled' if args.combine_chunks else 'disabled'}")
         if args.delay > 0:
             print(f"⏱️ Replay delay configured ({args.delay}ms) but ignored in LOG mode")
     elif args.mode == "hybrid":
         print("🔄 Hybrid mode: cache-through with backend fallback")
         print(f"📡 Backend: {args.backend}")
-        print(f"💾 Cache directory: {RECORDINGS_DIR}")
+        print(f"💾 Cache directory: {storage.get_recordings_dir()}")
         print(f"⏱️ Replay delay for cache hits: {args.delay}ms")
         print(f"   Pre-cached responses: {_recordings_count()}")
     else:
-        print(f"📂 Reading recordings from: {RECORDINGS_DIR}")
+        print(f"📂 Reading recordings from: {storage.get_recordings_dir()}")
         print(f"⏱️ Replay delay: {args.delay}ms")
         print(f"   Found {_recordings_count()} recorded responses")
 
