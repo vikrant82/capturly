@@ -1,11 +1,12 @@
 """Asynchronous traffic and SSE event persistence."""
 
+import json
 import os
 import queue
 import sys
 import threading
 
-from .storage import RECORDINGS_DIR
+from . import storage
 
 
 class AsyncTrafficLogger:
@@ -17,7 +18,7 @@ class AsyncTrafficLogger:
         self.thread = threading.Thread(target=self._run, name="traffic-log-writer", daemon=True)
         self.handler = object.__new__(handler_cls)
         self.handler.log_message = lambda *args, **kwargs: None
-        self.log_file = os.path.join(RECORDINGS_DIR, "traffic_log.json")
+        self.log_file = os.path.join(storage.get_recordings_dir(), "traffic_log.json")
         self.thread.start()
 
     def enqueue(self, entry):
@@ -75,10 +76,18 @@ class AsyncTrafficLogger:
             return None
 
     def _refresh_entries_from_disk(self, entries):
-        """Honor external cleanup so deleted logs are not resurrected from memory."""
-        if os.path.exists(self.log_file):
-            return entries
-        return []
+        """Reload entries from disk to honor external modifications (truncation, deletion)."""
+        if not os.path.exists(self.log_file):
+            return []
+
+        try:
+            with open(self.log_file, encoding="utf-8") as f:
+                content = f.read()
+                if not content.strip():
+                    return []
+                return json.loads(content)
+        except (json.JSONDecodeError, OSError):
+            return []
 
     def _write_entries(self, entries):
         try:
