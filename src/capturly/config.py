@@ -18,6 +18,8 @@ _ARG_DEFAULTS = {
     "host": "0.0.0.0",
     "delay": 0,
     "combine_chunks": False,
+    "dashboard": False,
+    "dashboard_port": 9090,
 }
 
 
