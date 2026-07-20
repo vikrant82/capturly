@@ -6,6 +6,7 @@ import time
 import urllib.error
 
 from .. import proxy, sse, storage, utils
+from ..inspection import openai as openai_inspection
 
 
 def build_sse_log_entry(
@@ -46,7 +47,7 @@ def build_log_entry(
     response_body,
 ):
     """Build full request/response metadata without writing the shared log."""
-    return {
+    entry = {
         "timestamp_ms": int(time.time() * 1000),
         "method": method,
         "path": path,
@@ -59,6 +60,10 @@ def build_log_entry(
         "response_body": utils.body_for_log_entry(response_body, response_headers),
         "response_body_size": len(response_body),
     }
+    ai_insights = openai_inspection.build_ai_insights(path, request_body, response_body)
+    if ai_insights is not None:
+        entry["ai_insights"] = ai_insights
+    return entry
 
 
 def build_combined_sse_log_entry(
@@ -113,6 +118,9 @@ def build_combined_sse_log_entry(
     }
     if stream_outcome["error"]:
         entry["sse_error"] = stream_outcome["error"]
+    ai_insights = openai_inspection.build_ai_insights(path, request_body, response_body)
+    if ai_insights is not None:
+        entry["ai_insights"] = ai_insights
     return entry
 
 

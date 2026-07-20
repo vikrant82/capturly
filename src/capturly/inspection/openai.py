@@ -179,3 +179,42 @@ def detect_openai_protocol(path: str, response_body: bytes) -> Optional[dict]:
         "id": response.get("id"),
         "usage": response.get("usage"),
     }
+
+
+def build_ai_insights(
+    path: str, request_body: bytes, response_body
+) -> Optional[dict]:
+    """Combine request and response insights into a single ai_insights dict.
+
+    Accepts response_body as bytes or a pre-parsed dict (for combined SSE
+    entries where the response is already structured). Returns None when
+    neither request nor response yields AI insights.
+
+    Args:
+        path: Request path
+        request_body: Raw request body bytes
+        response_body: Raw response bytes or a dict (combined SSE completion)
+
+    Returns:
+        Dict with "request" and/or "response" insight sub-dicts, or None.
+    """
+    request_insights = extract_request_insights(path, request_body)
+
+    if isinstance(response_body, dict):
+        response_bytes = json.dumps(response_body, ensure_ascii=False).encode("utf-8")
+    elif isinstance(response_body, bytes):
+        response_bytes = response_body
+    else:
+        response_bytes = b""
+
+    response_insights = extract_response_insights(path, response_bytes)
+
+    if request_insights is None and response_insights is None:
+        return None
+
+    result = {}
+    if request_insights is not None:
+        result["request"] = request_insights
+    if response_insights is not None:
+        result["response"] = response_insights
+    return result
