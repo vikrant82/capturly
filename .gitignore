@@ -23,3 +23,13 @@ mock-recordings/
 traffic_log.json
 *.pem
 *.key
+capturly-recordings/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Agent/tooling
+.opencode/
+.serena/
+session-*.md
