@@ -3,6 +3,77 @@
 import json
 from typing import Optional
 
+_OPENAI_ENDPOINTS = ("/v1/chat/completions", "/v1/completions")
+
+
+def _is_openai_endpoint(path: str) -> bool:
+    """Check if a request path targets a known OpenAI endpoint."""
+    return any(endpoint in path for endpoint in _OPENAI_ENDPOINTS)
+
+
+def extract_request_insights(path: str, request_body: bytes) -> Optional[dict]:
+    """Extract AI-relevant insights from an OpenAI request body.
+
+    Parses the request to surface system prompts, tool definitions, message
+    structure, and streaming configuration. Returns None for non-AI endpoints,
+    invalid JSON, or requests without a messages array.
+
+    Args:
+        path: Request path (e.g., "/v1/chat/completions")
+        request_body: Raw request body bytes
+
+    Returns:
+        Dict with extracted insights, or None if not applicable.
+    """
+    if not _is_openai_endpoint(path):
+        return None
+
+    try:
+        request = json.loads(request_body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    if not isinstance(request, dict):
+        return None
+
+    messages = request.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return None
+
+    system_prompts = []
+    roles = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role:
+            roles.append(role)
+        if role == "system":
+            content = msg.get("content")
+            if isinstance(content, str) and content:
+                system_prompts.append(content)
+
+    insights = {
+        "model": request.get("model"),
+        "message_count": len(messages),
+        "roles": roles,
+        "system_prompts": system_prompts,
+        "stream": request.get("stream", False),
+    }
+
+    tools = request.get("tools")
+    if isinstance(tools, list) and tools:
+        tool_names = []
+        for tool in tools:
+            if isinstance(tool, dict):
+                func = tool.get("function")
+                if isinstance(func, dict) and func.get("name"):
+                    tool_names.append(func["name"])
+        insights["tool_names"] = tool_names
+        insights["tool_count"] = len(tools)
+
+    return insights
+
 
 def detect_openai_protocol(path: str, response_body: bytes) -> Optional[dict]:
     """Detect OpenAI API traffic and return protocol metadata.
@@ -15,9 +86,7 @@ def detect_openai_protocol(path: str, response_body: bytes) -> Optional[dict]:
         Dict with protocol metadata if OpenAI traffic detected, None otherwise.
         Returns None for non-AI endpoints, invalid JSON, or unrecognized response shapes.
     """
-    if not any(
-        endpoint in path for endpoint in ["/v1/chat/completions", "/v1/completions"]
-    ):
+    if not _is_openai_endpoint(path):
         return None
 
     try:
