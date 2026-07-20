@@ -1,6 +1,7 @@
 """Threaded HTTP server and Capturly server lifecycle."""
 
 import os
+import threading
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 
@@ -28,6 +29,22 @@ def _recordings_count():
     return len([f for f in os.listdir(storage.get_recordings_dir()) if f.endswith(".json")])
 
 
+def _start_dashboard(port, traffic_log_path):
+    """Start the dashboard server in a background daemon thread."""
+    from . import dashboard
+
+    server = dashboard.create_dashboard_server(
+        entries=None,
+        host="127.0.0.1",
+        port=port,
+        traffic_log_path=traffic_log_path,
+    )
+    thread = threading.Thread(target=server.serve_forever, name="dashboard", daemon=True)
+    thread.start()
+    print(f"📊 Dashboard running at http://127.0.0.1:{port}")
+    return server
+
+
 def run_server(args):
     """Configure the handler, run the server, and shut down its logger."""
     MockServiceHandler.mode = args.mode
@@ -37,6 +54,11 @@ def run_server(args):
     MockServiceHandler.traffic_logger = (
         AsyncTrafficLogger(MockServiceHandler) if args.mode == "log" else None
     )
+
+    # Start dashboard if requested
+    if getattr(args, "dashboard", False):
+        traffic_log_path = os.path.join(storage.get_recordings_dir(), "traffic_log.json")
+        _start_dashboard(args.dashboard_port, traffic_log_path)
 
     server = ThreadedHTTPServer((args.host, args.port), MockServiceHandler)
 

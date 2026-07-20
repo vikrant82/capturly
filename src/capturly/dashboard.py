@@ -1,9 +1,10 @@
 """Web dashboard server for real-time traffic inspection."""
 
 import json
+import os
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 # Minimal HTML placeholder — replaced by full frontend in Task 6.
@@ -265,11 +266,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler for the dashboard API and frontend."""
 
     # Set by create_dashboard_server before serving.
-    entries: List[Dict[str, Any]] = []
+    entries: Optional[List[Dict[str, Any]]] = []
+    traffic_log_path: Optional[str] = None
 
     def log_message(self, format, *args):
         """Suppress default request logging."""
         pass
+
+    def _get_entries(self) -> List[Dict[str, Any]]:
+        """Return entries from memory or by reading the traffic log file."""
+        if self.entries is not None:
+            return self.entries
+        if self.traffic_log_path:
+            return _read_traffic_log(self.traffic_log_path)
+        return []
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -296,7 +306,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(_INDEX_HTML.encode("utf-8"))
 
     def _serve_traffic_list(self, params: Dict[str, List[str]]):
-        entries = self.entries
+        entries = self._get_entries()
 
         # Filter by AI traffic
         if params.get("ai", [""])[0].lower() == "true":
@@ -320,13 +330,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"total": total, "entries": summaries})
 
     def _serve_traffic_detail(self, index: int):
-        if index < 0 or index >= len(self.entries):
+        entries = self._get_entries()
+        if index < 0 or index >= len(entries):
             self._send_json({"error": "Entry not found"}, status=404)
             return
-        self._send_json(self.entries[index])
+        self._send_json(entries[index])
 
     def _serve_stats(self):
-        self._send_json(_compute_stats(self.entries))
+        self._send_json(_compute_stats(self._get_entries()))
 
     def _send_json(self, data: Any, status: int = 200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -337,20 +348,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def _read_traffic_log(path: str) -> List[Dict[str, Any]]:
+    """Read traffic log entries from a JSON file. Returns [] on any error."""
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+        return []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
 def create_dashboard_server(
-    entries: List[Dict[str, Any]],
+    entries: Optional[List[Dict[str, Any]]] = None,
     host: str = "127.0.0.1",
     port: int = 9090,
+    traffic_log_path: Optional[str] = None,
 ) -> HTTPServer:
-    """Create a dashboard HTTP server bound to the given entries.
+    """Create a dashboard HTTP server.
 
-    The server reads from the provided entries list. For live updates,
-    pass a shared list that the traffic logger appends to.
+    Provide either a static entries list or a traffic_log_path for live
+    file-based reading. When traffic_log_path is set, the dashboard reads
+    the file on each request, reflecting live updates from the logger.
 
     Args:
-        entries: List of traffic log entry dicts.
+        entries: Static list of traffic log entry dicts (or None for file mode).
         host: Bind address.
         port: Bind port (0 for random available port in tests).
+        traffic_log_path: Path to traffic_log.json for live reading.
 
     Returns:
         An HTTPServer instance ready to serve_forever().
@@ -360,6 +388,7 @@ def create_dashboard_server(
         pass
 
     _Handler.entries = entries
+    _Handler.traffic_log_path = traffic_log_path
 
     server = HTTPServer((host, port), _Handler)
     return server

@@ -50,6 +50,17 @@ def main(argv=None):
         dest="config_file",
         help="Path to YAML config file (default: ./capturly.yaml or ~/.capturly/config.yaml)",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Enable the web traffic dashboard",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=9090,
+        help="Port for the web dashboard (default: 9090)",
+    )
     args = parser.parse_args(argv)
 
     # Load and merge config file (CLI args take priority)
