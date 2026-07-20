@@ -3,7 +3,7 @@
 import argparse
 import os
 
-from . import server
+from . import config, server
 
 
 def main(argv=None):
@@ -44,7 +44,20 @@ def main(argv=None):
         type=str,
         help="Directory for recordings (default: ./capturly-recordings or CAPTURLY_RECORDINGS_DIR)",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        dest="config_file",
+        help="Path to YAML config file (default: ./capturly.yaml or ~/.capturly/config.yaml)",
+    )
     args = parser.parse_args(argv)
+
+    # Load and merge config file (CLI args take priority)
+    config_path = config.find_config_file(explicit_path=args.config_file)
+    if config_path:
+        cfg = config.load_config(config_path)
+        if cfg:
+            args = config.merge_config_with_args(cfg, args)
 
     if args.recordings_dir:
         os.environ["CAPTURLY_RECORDINGS_DIR"] = args.recordings_dir

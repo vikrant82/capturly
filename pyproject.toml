@@ -30,6 +30,7 @@ classifiers = [
 ]
 dependencies = [
     "cryptography>=41.0.0",  # For TLS cert generation
+    "pyyaml>=6.0",  # For capturly.yaml config file support
 ]
 
 [project.optional-dependencies]
