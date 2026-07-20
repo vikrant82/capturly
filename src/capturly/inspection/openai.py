@@ -75,6 +75,77 @@ def extract_request_insights(path: str, request_body: bytes) -> Optional[dict]:
     return insights
 
 
+def extract_response_insights(path: str, response_body: bytes) -> Optional[dict]:
+    """Extract AI-relevant insights from an OpenAI response body.
+
+    Parses the response to surface token usage, finish reasons, assistant
+    content, and tool calls. Returns None for non-AI endpoints, invalid JSON,
+    or responses without a choices array.
+
+    Args:
+        path: Request path (e.g., "/v1/chat/completions")
+        response_body: Raw response body bytes
+
+    Returns:
+        Dict with extracted insights, or None if not applicable.
+    """
+    if not _is_openai_endpoint(path):
+        return None
+
+    try:
+        response = json.loads(response_body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    if not isinstance(response, dict):
+        return None
+
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+
+    finish_reasons = []
+    assistant_content = []
+    tool_call_names = []
+
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+
+        reason = choice.get("finish_reason")
+        if reason:
+            finish_reasons.append(reason)
+
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            assistant_content.append(content)
+
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    func = tc.get("function")
+                    if isinstance(func, dict) and func.get("name"):
+                        tool_call_names.append(func["name"])
+
+    insights = {
+        "model": response.get("model"),
+        "usage": response.get("usage"),
+        "finish_reasons": finish_reasons,
+        "assistant_content": assistant_content,
+    }
+
+    if tool_call_names:
+        insights["tool_call_names"] = tool_call_names
+        insights["tool_call_count"] = len(tool_call_names)
+
+    return insights
+
+
 def detect_openai_protocol(path: str, response_body: bytes) -> Optional[dict]:
     """Detect OpenAI API traffic and return protocol metadata.
 
