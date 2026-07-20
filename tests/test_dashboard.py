@@ -139,13 +139,18 @@ def test_api_traffic_filter_ai():
 
 
 def test_dashboard_serves_html():
-    """GET / returns HTML content."""
+    """GET / returns HTML content with traffic viewer UI."""
     server, port = _start_dashboard(SAMPLE_ENTRIES)
     try:
         url = f"http://127.0.0.1:{port}/"
         with urllib.request.urlopen(url, timeout=5) as resp:
             content = resp.read().decode()
-            assert "<!DOCTYPE html>" in content or "<html" in content
+            assert "<!DOCTYPE html>" in content
             assert resp.headers.get("Content-Type", "").startswith("text/html")
+            # Key UI elements
+            assert "traffic-table" in content
+            assert "stats" in content.lower()
+            assert "/api/traffic" in content
+            assert "/api/stats" in content
     finally:
         server.shutdown()
