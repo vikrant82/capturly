@@ -4,7 +4,7 @@ import json
 import os
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 # Minimal HTML placeholder — replaced by full frontend in Task 6.
@@ -459,12 +459,12 @@ setInterval(refresh, 3000);
 _TRAFFIC_DETAIL_RE = re.compile(r"^/api/traffic/(\d+)$")
 
 
-def _compute_stats(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _compute_stats(entries: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute summary statistics from traffic log entries."""
     total_requests = len(entries)
     ai_requests = 0
     total_tokens = 0
-    models: List[str] = []
+    models: list[str] = []
 
     for entry in entries:
         insights = entry.get("ai_insights")
@@ -490,7 +490,7 @@ def _compute_stats(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _summary_entry(entry: Dict[str, Any], index: int) -> Dict[str, Any]:
+def _summary_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
     """Return a lightweight summary of a traffic entry for list views."""
     summary = {
         "_index": index,
@@ -515,14 +515,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler for the dashboard API and frontend."""
 
     # Set by create_dashboard_server before serving.
-    entries: Optional[List[Dict[str, Any]]] = []
+    entries: Optional[list[dict[str, Any]]] = []
     traffic_log_path: Optional[str] = None
 
     def log_message(self, format, *args):
         """Suppress default request logging."""
         pass
 
-    def _get_entries(self) -> List[Dict[str, Any]]:
+    def _get_entries(self) -> list[dict[str, Any]]:
         """Return entries from memory or by reading the traffic log file."""
         if self.entries is not None:
             return self.entries
@@ -569,7 +569,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(_INDEX_HTML.encode("utf-8"))
 
-    def _serve_traffic_list(self, params: Dict[str, List[str]]):
+    def _serve_traffic_list(self, params: dict[str, list[str]]):
         all_entries = self._get_entries()
 
         # Build indexed list to preserve original indices through filtering
@@ -624,7 +624,7 @@ def _truncate_traffic_log(path: str) -> None:
         pass
 
 
-def _read_traffic_log(path: str) -> List[Dict[str, Any]]:
+def _read_traffic_log(path: str) -> list[dict[str, Any]]:
     """Read traffic log entries from a JSON file. Returns [] on any error."""
     if not os.path.isfile(path):
         return []
@@ -639,7 +639,7 @@ def _read_traffic_log(path: str) -> List[Dict[str, Any]]:
 
 
 def create_dashboard_server(
-    entries: Optional[List[Dict[str, Any]]] = None,
+    entries: Optional[list[dict[str, Any]]] = None,
     host: str = "127.0.0.1",
     port: int = 9090,
     traffic_log_path: Optional[str] = None,

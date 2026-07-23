@@ -5,8 +5,8 @@ import json
 from capturly import sse
 from capturly.inspection import agui
 
-
 # --- AGUI SSE event helpers ---
+
 
 def _agui_sse(event_dict):
     """Format a dict as raw SSE data lines (as the handler would receive)."""
@@ -74,9 +74,15 @@ def test_is_agui_event_negative():
 
 def test_agui_accumulator_text_messages():
     acc = agui.new_agui_accumulator()
-    agui.accumulate_agui_event(acc, {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"})
-    agui.accumulate_agui_event(acc, {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "Hello "})
-    agui.accumulate_agui_event(acc, {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "world"})
+    agui.accumulate_agui_event(
+        acc, {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"}
+    )
+    agui.accumulate_agui_event(
+        acc, {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "Hello "}
+    )
+    agui.accumulate_agui_event(
+        acc, {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "world"}
+    )
     agui.accumulate_agui_event(acc, {"type": "TEXT_MESSAGE_END", "messageId": "m1"})
 
     result = agui.finalize_agui_chunks(acc)
@@ -89,11 +95,19 @@ def test_agui_accumulator_text_messages():
 
 def test_agui_accumulator_tool_calls():
     acc = agui.new_agui_accumulator()
-    agui.accumulate_agui_event(acc, {"type": "TOOL_CALL_START", "toolCallId": "tc1", "toolCallName": "search"})
-    agui.accumulate_agui_event(acc, {"type": "TOOL_CALL_ARGS", "toolCallId": "tc1", "delta": '{"q":'})
-    agui.accumulate_agui_event(acc, {"type": "TOOL_CALL_ARGS", "toolCallId": "tc1", "delta": '"test"}'})
+    agui.accumulate_agui_event(
+        acc, {"type": "TOOL_CALL_START", "toolCallId": "tc1", "toolCallName": "search"}
+    )
+    agui.accumulate_agui_event(
+        acc, {"type": "TOOL_CALL_ARGS", "toolCallId": "tc1", "delta": '{"q":'}
+    )
+    agui.accumulate_agui_event(
+        acc, {"type": "TOOL_CALL_ARGS", "toolCallId": "tc1", "delta": '"test"}'}
+    )
     agui.accumulate_agui_event(acc, {"type": "TOOL_CALL_END", "toolCallId": "tc1"})
-    agui.accumulate_agui_event(acc, {"type": "TOOL_CALL_RESULT", "toolCallId": "tc1", "content": "3 results"})
+    agui.accumulate_agui_event(
+        acc, {"type": "TOOL_CALL_RESULT", "toolCallId": "tc1", "content": "3 results"}
+    )
 
     result = agui.finalize_agui_chunks(acc)
     assert result is not None
@@ -138,8 +152,12 @@ def test_agui_accumulator_state_snapshot():
 def test_agui_accumulator_reasoning():
     acc = agui.new_agui_accumulator()
     agui.accumulate_agui_event(acc, {"type": "REASONING_MESSAGE_START", "messageId": "r1"})
-    agui.accumulate_agui_event(acc, {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "Let me "})
-    agui.accumulate_agui_event(acc, {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "think"})
+    agui.accumulate_agui_event(
+        acc, {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "Let me "}
+    )
+    agui.accumulate_agui_event(
+        acc, {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "think"}
+    )
     agui.accumulate_agui_event(acc, {"type": "REASONING_MESSAGE_END", "messageId": "r1"})
 
     result = agui.finalize_agui_chunks(acc)
@@ -155,8 +173,12 @@ def test_agui_accumulator_empty():
 def test_agui_text_message_chunk_convenience():
     """TEXT_MESSAGE_CHUNK auto-creates messages."""
     acc = agui.new_agui_accumulator()
-    agui.accumulate_agui_event(acc, {"type": "TEXT_MESSAGE_CHUNK", "messageId": "m1", "role": "assistant", "delta": "Hi"})
-    agui.accumulate_agui_event(acc, {"type": "TEXT_MESSAGE_CHUNK", "messageId": "m1", "delta": " there"})
+    agui.accumulate_agui_event(
+        acc, {"type": "TEXT_MESSAGE_CHUNK", "messageId": "m1", "role": "assistant", "delta": "Hi"}
+    )
+    agui.accumulate_agui_event(
+        acc, {"type": "TEXT_MESSAGE_CHUNK", "messageId": "m1", "delta": " there"}
+    )
 
     result = agui.finalize_agui_chunks(acc)
     assert result["messages"][0]["content"] == "Hi there"
@@ -165,7 +187,9 @@ def test_agui_text_message_chunk_convenience():
 def test_agui_tool_call_chunk_convenience():
     """TOOL_CALL_CHUNK auto-creates tool calls."""
     acc = agui.new_agui_accumulator()
-    agui.accumulate_agui_event(acc, {"type": "TOOL_CALL_CHUNK", "toolCallId": "tc1", "toolCallName": "run", "delta": "{}"})
+    agui.accumulate_agui_event(
+        acc, {"type": "TOOL_CALL_CHUNK", "toolCallId": "tc1", "toolCallName": "run", "delta": "{}"}
+    )
 
     result = agui.finalize_agui_chunks(acc)
     assert result["tool_calls"][0]["name"] == "run"
@@ -237,10 +261,12 @@ def test_protocol_detection_openai_still_works():
 def test_unknown_protocol_ignored():
     """Events that match neither OpenAI nor AGUI are ignored."""
     accumulator = sse.new_chunk_accumulator()
-    events = _parse_sse_lines([
-        'data: {"foo": "bar"}\n\n',
-        'data: {"baz": 123}\n\n',
-    ])
+    events = _parse_sse_lines(
+        [
+            'data: {"foo": "bar"}\n\n',
+            'data: {"baz": 123}\n\n',
+        ]
+    )
     for event_lines in events:
         sse.accumulate_sse_event(accumulator, event_lines)
 
@@ -253,13 +279,14 @@ def test_stream_outcome_preserved_on_protocol_switch():
     accumulator = sse.new_chunk_accumulator()
     original_outcome = accumulator["stream_outcome"]
 
-    events = _parse_sse_lines([
-        'data: {"type": "RUN_STARTED", "runId": "r1"}\n\n',
-    ])
+    events = _parse_sse_lines(
+        [
+            'data: {"type": "RUN_STARTED", "runId": "r1"}\n\n',
+        ]
+    )
     for event_lines in events:
         sse.accumulate_sse_event(accumulator, event_lines)
 
     # The stream_outcome reference should be the same object
     assert accumulator["stream_outcome"] is original_outcome
     assert accumulator.get("_protocol") == "agui"
-

@@ -304,7 +304,9 @@ def finalize_sse_chunks(accumulator):
     return response_body
 
 
-def respond_sse_stream(handler, response, status, headers=None, event_log_file=None, accumulator=None):
+def respond_sse_stream(
+    handler, response, status, headers=None, event_log_file=None, accumulator=None
+):
     """Forward an SSE response incrementally as lines arrive from the backend."""
     handler.close_connection = True
     handler.send_response(status)

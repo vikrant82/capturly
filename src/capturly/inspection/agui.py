@@ -7,7 +7,7 @@ STATE_DELTA patches are counted but not applied (KISS).
 """
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # Event types that identify an AGUI protocol stream.
 AGUI_EVENT_TYPES = frozenset(
@@ -47,7 +47,7 @@ def is_agui_event(chunk: dict) -> bool:
     return isinstance(chunk.get("type"), str) and chunk["type"] in AGUI_EVENT_TYPES
 
 
-def new_agui_accumulator() -> Dict[str, Any]:
+def new_agui_accumulator() -> dict[str, Any]:
     """Create request-local state for combining streamed AGUI events."""
     return {
         "_protocol": "agui",
@@ -65,21 +65,21 @@ def new_agui_accumulator() -> Dict[str, Any]:
     }
 
 
-def _ensure_message(accumulator: Dict[str, Any], msg_id: str, role: str = "assistant") -> None:
+def _ensure_message(accumulator: dict[str, Any], msg_id: str, role: str = "assistant") -> None:
     """Register a message id if not already tracked."""
     if msg_id and msg_id not in accumulator["messages"]:
         accumulator["messages"][msg_id] = {"role": role, "content": ""}
         accumulator["message_order"].append(msg_id)
 
 
-def _ensure_tool_call(accumulator: Dict[str, Any], tc_id: str, name: str = "") -> None:
+def _ensure_tool_call(accumulator: dict[str, Any], tc_id: str, name: str = "") -> None:
     """Register a tool call id if not already tracked."""
     if tc_id and tc_id not in accumulator["tool_calls"]:
         accumulator["tool_calls"][tc_id] = {"name": name, "args": "", "result": None}
         accumulator["tool_call_order"].append(tc_id)
 
 
-def accumulate_agui_event(accumulator: Dict[str, Any], chunk: dict) -> None:
+def accumulate_agui_event(accumulator: dict[str, Any], chunk: dict) -> None:
     """Process one parsed AGUI event and merge it into the accumulator.
 
     Handles the Start/Content/End streaming triads for text messages,
@@ -172,7 +172,7 @@ def accumulate_agui_event(accumulator: Dict[str, Any], chunk: dict) -> None:
     # Everything else (STEP_*, ACTIVITY_*, CUSTOM, RAW, etc.) — counted only
 
 
-def finalize_agui_chunks(accumulator: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def finalize_agui_chunks(accumulator: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Return a structured AGUI completion object, or None without valid events.
 
     The returned dict has ``object: "agui.completion"`` and contains
@@ -185,9 +185,7 @@ def finalize_agui_chunks(accumulator: Dict[str, Any]) -> Optional[Dict[str, Any]
     messages = []
     for msg_id in accumulator["message_order"]:
         msg = accumulator["messages"][msg_id]
-        messages.append(
-            {"message_id": msg_id, "role": msg["role"], "content": msg["content"]}
-        )
+        messages.append({"message_id": msg_id, "role": msg["role"], "content": msg["content"]})
 
     tool_calls = []
     for tc_id in accumulator["tool_call_order"]:
@@ -210,7 +208,7 @@ def finalize_agui_chunks(accumulator: Dict[str, Any]) -> Optional[Dict[str, Any]
     for msg_id in accumulator["reasoning_order"]:
         reasoning.append({"message_id": msg_id, "content": accumulator["reasoning"][msg_id]})
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "object": "agui.completion",
         "run": accumulator["run"],
         "event_count": accumulator["event_count"],
