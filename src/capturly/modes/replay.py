@@ -10,7 +10,9 @@ from .. import proxy, storage
 
 def replay_saved_response(handler, method, path, body):
     """Return the response saved for a request, if one exists."""
-    cache_key = "jwks_static" if "/oauth2/jwks" in path else storage.get_cache_key(method, path, body)
+    cache_key = (
+        "jwks_static" if "/oauth2/jwks" in path else storage.get_cache_key(method, path, body)
+    )
     recording_file = os.path.join(storage.RECORDINGS_DIR, f"{cache_key}.json")
     sse_recording_file = os.path.join(storage.RECORDINGS_DIR, f"{cache_key}.sse")
 
@@ -22,9 +24,7 @@ def replay_saved_response(handler, method, path, body):
         return
 
     if os.path.exists(sse_recording_file):
-        handler.log_message(
-            "✓ SSE endpoint marker found (replay cannot emit recorded events yet)"
-        )
+        handler.log_message("✓ SSE endpoint marker found (replay cannot emit recorded events yet)")
         sse_headers = {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",

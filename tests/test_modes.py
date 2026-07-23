@@ -1,7 +1,6 @@
 """Tests for capturly operating modes."""
 
 import json
-from pathlib import Path
 
 
 def test_record_mode_saves_response(temp_recordings_dir, mock_backend_server):

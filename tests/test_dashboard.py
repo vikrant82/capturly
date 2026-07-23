@@ -1,10 +1,7 @@
 """Tests for the dashboard backend API."""
 
 import json
-import os
-import tempfile
 import threading
-import time
 import urllib.error
 import urllib.request
 
@@ -37,7 +34,9 @@ SAMPLE_ENTRIES = [
         "response_body_size": 200,
         "ai_insights": {
             "request": {"model": "gpt-4", "system_prompts": ["Be helpful"], "message_count": 2},
-            "response": {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+            "response": {
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            },
         },
     },
     {
@@ -57,7 +56,9 @@ SAMPLE_ENTRIES = [
         "response_body_size": 300,
         "ai_insights": {
             "request": {"model": "gpt-4", "system_prompts": [], "message_count": 3},
-            "response": {"usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}},
+            "response": {
+                "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+            },
         },
     },
 ]

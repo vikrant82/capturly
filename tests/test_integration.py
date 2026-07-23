@@ -43,11 +43,17 @@ HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
             # Record mode
             record_proc = subprocess.Popen(
                 [
-                    sys.executable, "-m", "capturly",
-                    "--mode", "record",
-                    "--backend", "http://127.0.0.1:8765",
-                    "--port", "9998",
-                    "--recordings-dir", str(recordings_dir),
+                    sys.executable,
+                    "-m",
+                    "capturly",
+                    "--mode",
+                    "record",
+                    "--backend",
+                    "http://127.0.0.1:8765",
+                    "--port",
+                    "9998",
+                    "--recordings-dir",
+                    str(recordings_dir),
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -73,10 +79,15 @@ HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
             # Replay mode
             replay_proc = subprocess.Popen(
                 [
-                    sys.executable, "-m", "capturly",
-                    "--mode", "replay",
-                    "--port", "9997",
-                    "--recordings-dir", str(recordings_dir),
+                    sys.executable,
+                    "-m",
+                    "capturly",
+                    "--mode",
+                    "replay",
+                    "--port",
+                    "9997",
+                    "--recordings-dir",
+                    str(recordings_dir),
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

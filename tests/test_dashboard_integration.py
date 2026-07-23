@@ -14,7 +14,12 @@ def test_dashboard_reads_from_traffic_log_file():
     with tempfile.TemporaryDirectory() as tmpdir:
         log_file = os.path.join(tmpdir, "traffic_log.json")
         entries = [
-            {"timestamp_ms": 1000, "method": "POST", "path": "/v1/chat/completions", "status_code": 200},
+            {
+                "timestamp_ms": 1000,
+                "method": "POST",
+                "path": "/v1/chat/completions",
+                "status_code": 200,
+            },
             {"timestamp_ms": 2000, "method": "GET", "path": "/api/health", "status_code": 200},
         ]
         with open(log_file, "w") as f:
@@ -42,7 +47,9 @@ def test_dashboard_live_updates():
     with tempfile.TemporaryDirectory() as tmpdir:
         log_file = os.path.join(tmpdir, "traffic_log.json")
         with open(log_file, "w") as f:
-            json.dump([{"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200}], f)
+            json.dump(
+                [{"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200}], f
+            )
 
         server = dashboard.create_dashboard_server(
             entries=None, host="127.0.0.1", port=0, traffic_log_path=log_file
@@ -54,10 +61,13 @@ def test_dashboard_live_updates():
         try:
             # Append a new entry
             with open(log_file, "w") as f:
-                json.dump([
-                    {"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200},
-                    {"timestamp_ms": 2000, "method": "POST", "path": "/b", "status_code": 201},
-                ], f)
+                json.dump(
+                    [
+                        {"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200},
+                        {"timestamp_ms": 2000, "method": "POST", "path": "/b", "status_code": 201},
+                    ],
+                    f,
+                )
 
             url = f"http://127.0.0.1:{port}/api/traffic"
             with urllib.request.urlopen(url, timeout=5) as resp:
@@ -88,7 +98,6 @@ def test_dashboard_missing_log_file():
 
 def test_cli_dashboard_flags():
     """CLI accepts --dashboard and --dashboard-port flags."""
-    from capturly import cli
     import argparse
 
     # Parse with dashboard flags (mock run_server to avoid actually starting)

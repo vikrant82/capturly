@@ -7,7 +7,9 @@ from .. import storage
 
 def hybrid_request(handler, method, path, body):
     """Replay a cached response or record and proxy a cache miss."""
-    cache_key = "jwks_static" if "/oauth2/jwks" in path else storage.get_cache_key(method, path, body)
+    cache_key = (
+        "jwks_static" if "/oauth2/jwks" in path else storage.get_cache_key(method, path, body)
+    )
     recording_file = os.path.join(storage.RECORDINGS_DIR, f"{cache_key}.json")
     sse_recording_file = os.path.join(storage.RECORDINGS_DIR, f"{cache_key}.sse")
 

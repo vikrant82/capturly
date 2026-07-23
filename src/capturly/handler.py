@@ -22,9 +22,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         """Log with a mode prefix and timestamp."""
         message = format % args if args else format
-        sys.stderr.write(
-            f"[{self.mode.upper()}] {self.log_date_time_string()} {message}\n"
-        )
+        sys.stderr.write(f"[{self.mode.upper()}] {self.log_date_time_string()} {message}\n")
 
     def do_GET(self):
         self._handle_request("GET")
@@ -205,9 +203,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         return modes.replay.replay_saved_response(self, method, path, body)
 
     def _save_recording(self, method, path, body, status_code, headers, response_body):
-        return storage.save_recording(
-            self, method, path, body, status_code, headers, response_body
-        )
+        return storage.save_recording(self, method, path, body, status_code, headers, response_body)
 
     def _respond_raw(self, body, status, headers=None):
         return proxy.respond_raw(self, body, status, headers)
@@ -215,9 +211,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     def _respond_sse_stream(
         self, response, status, headers=None, event_log_file=None, accumulator=None
     ):
-        return sse.respond_sse_stream(
-            self, response, status, headers, event_log_file, accumulator
-        )
+        return sse.respond_sse_stream(self, response, status, headers, event_log_file, accumulator)
 
     def _respond_json(self, data, status=200):
         return proxy.respond_json(self, data, status)
