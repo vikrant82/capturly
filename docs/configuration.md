@@ -16,7 +16,7 @@ Core options:
 
 Mode-specific:
   --delay INT                           Replay delay in milliseconds (replay/hybrid)
-  --combine-chunks                      Combine OpenAI SSE chunks (log mode)
+  --combine-chunks                      Combine SSE chunks — auto-detects OpenAI or AGUI protocol (log mode)
 ```
 
 **Validation:**
@@ -41,6 +41,26 @@ The recordings directory can be set via environment variable. CLI `--recordings-
 | recordings_dir | `./capturly-recordings` |
 | delay | `0` |
 | combine_chunks | `false` |
+
+## Dashboard
+
+The web dashboard is available at `http://localhost:9090` (configurable via `--dashboard-port`).
+
+**API endpoints:**
+- `GET /api/traffic?limit=N&offset=N&ai=true` — paginated traffic list
+- `GET /api/traffic/{index}` — full entry detail
+- `GET /api/stats` — summary statistics
+- `POST /api/truncate` — clear all traffic entries
+
+## Dashboard
+
+The web dashboard is available at `http://localhost:9090` (configurable via `--dashboard-port`).
+
+**API endpoints:**
+- `GET /api/traffic?limit=N&offset=N&ai=true` — paginated traffic list
+- `GET /api/traffic/{index}` — full entry detail
+- `GET /api/stats` — summary statistics
+- `POST /api/truncate` — clear all traffic entries
 
 ## Recordings Directory
 

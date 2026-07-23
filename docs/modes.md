@@ -151,7 +151,7 @@ capturly --mode log --backend https://api.openai.com
 - `sse-events/*.jsonl`: Individual SSE event streams
 
 **Options:**
-- `--combine-chunks`: Combine OpenAI streaming chunks into final response
+- `--combine-chunks`: Combine streaming chunks into final response (OpenAI and AGUI protocols auto-detected)
 
 ## Mode Comparison
 
@@ -161,4 +161,23 @@ capturly --mode log --backend https://api.openai.com
 | Saves responses | Yes | No | Yes | No |
 | Full traffic log | No | No | No | Yes |
 | AI inspection | No | No | No | Yes |
+| AGUI inspection | No | No | No | Yes |
 | Use case | Test fixtures | Offline tests | Dev speedup | Debugging |
+
+## SSE Chunk Combining
+
+When `--combine-chunks` is enabled in log mode, Capturly auto-detects the streaming protocol from the first SSE event and combines chunks accordingly:
+
+**OpenAI protocol** (detected by `choices` array in event data):
+- Merges `delta.content`, `delta.tool_calls`, `delta.function_call` across chunks
+- Produces a complete `chat.completion` object with usage stats
+
+**AGUI protocol** (detected by `type` field matching known AGUI event types):
+- Combines `TEXT_MESSAGE_START/CONTENT/END` into full messages
+- Combines `TOOL_CALL_START/ARGS/END/RESULT` into full tool calls with parsed JSON arguments
+- Captures `RUN_STARTED/FINISHED/ERROR` lifecycle metadata
+- Keeps latest `STATE_SNAPSHOT`; counts `STATE_DELTA` patches (not applied)
+- Combines `REASONING_MESSAGE_*` into reasoning content
+- Produces an `agui.completion` object
+
+**Unknown protocols** are ignored (entry gets `no_valid_chunks` fallback).
