@@ -59,7 +59,9 @@ _INDEX_HTML = """<!DOCTYPE html>
   .detail-section h3 { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; }
   .detail-section pre, .detail-body pre { background: #0d1117; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   details { margin-bottom: 8px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-  details summary { padding: 10px 14px; cursor: pointer; font-weight: 600; font-size: 13px; color: #c9d1d9; background: #21262d; user-select: none; list-style: none; display: flex; align-items: center; gap: 8px; }
+  details summary { padding: 10px 14px; cursor: pointer; font-weight: 600; font-size: 13px; color: #c9d1d9; background: #21262d; user-select: none; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .copy-btn { background: none; border: 1px solid #30363d; color: #8b949e; cursor: pointer; font-size: 12px; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+  .copy-btn:hover { color: #e6edf3; border-color: #8b949e; }
   details summary::-webkit-details-marker { display: none; }
   details summary::before { content: '\\25B6'; font-size: 10px; color: #8b949e; transition: transform 0.15s; }
   details[open] summary::before { transform: rotate(90deg); }
@@ -143,8 +145,16 @@ function statusClass(code) {
   return 's5xx';
 }
 
+function copySection(btn) {
+  const body = btn.closest('details').querySelector('.detail-body');
+  const text = body.innerText || body.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '\u2713';
+    setTimeout(() => { btn.textContent = '\u2398'; }, 1500);
+  });
+}
 function collapsible(title, bodyHtml, open) {
-  return '<details' + (open ? ' open' : '') + '><summary>' + title + '</summary><div class="detail-body">' + bodyHtml + '</div></details>';
+  return '<details' + (open ? ' open' : '') + '><summary><span>' + title + '</span><button class="copy-btn" onclick="event.preventDefault();copySection(this)" title="Copy">\u2398</button></summary><div class="detail-body">' + bodyHtml + '</div></details>';
 }
 
 function metaItem(key, val) {
