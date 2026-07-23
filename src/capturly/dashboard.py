@@ -46,6 +46,7 @@ _INDEX_HTML = """<!DOCTYPE html>
   .badge.ai { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
   .badge.sse { background: #3fb95033; color: #3fb950; border: 1px solid #3fb950; }
   .badge.agui { background: #bc8cff33; color: #bc8cff; border: 1px solid #bc8cff; }
+  .badge.tools { background: #d2992233; color: #d29922; border: 1px solid #d29922; }
   .empty { text-align: center; padding: 48px; color: #8b949e; }
   .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 99; }
   .overlay.open { display: block; }
@@ -238,7 +239,7 @@ function renderAIDetail(e) {
 
   var sysPrompts = aiReq.system_prompts || [];
   if (sysPrompts.length) {
-    html += collapsible('&#x1F4DC; System Prompt', '<pre>' + esc(sysPrompts.join('\\n---\\n')) + '</pre>', true);
+    html += collapsible('&#x1F4DC; System Prompt', '<pre>' + esc(sysPrompts.join('\\n---\\n')) + '</pre>', false);
   }
 
   var tools = req.tools || [];
@@ -249,7 +250,7 @@ function renderAIDetail(e) {
   var messages = (req.messages || []).filter(function(m) { return m.role !== 'system'; });
   if (messages.length) {
     var msgsHtml = messages.map(renderMessage).join('');
-    html += collapsible('&#x1F4AC; Messages (' + messages.length + ')', msgsHtml, true);
+    html += collapsible('&#x1F4AC; Messages (' + messages.length + ')', msgsHtml, false);
   }
 
   var choices = res.choices || [];
@@ -266,7 +267,7 @@ function renderAIDetail(e) {
       }
     });
     if (respHtml) {
-      html += collapsible('&#x1F916; Assistant Response', respHtml, true);
+      html += collapsible('&#x1F916; Assistant Response', respHtml, false);
     }
   }
 
@@ -303,7 +304,7 @@ function renderAGUIDetail(e) {
       var role = msg.role || 'assistant';
       return '<div class="msg ' + esc(role) + '"><div class="msg-role">' + esc(role) + '</div><div class="msg-content">' + esc(msg.content || '') + '</div></div>';
     }).join('');
-    html += collapsible('&#x1F4AC; Messages (' + messages.length + ')', msgsHtml, true);
+    html += collapsible('&#x1F4AC; Messages (' + messages.length + ')', msgsHtml, false);
   }
 
   var toolCalls = res.tool_calls || [];
@@ -315,7 +316,7 @@ function renderAGUIDetail(e) {
       h += '</div>';
       return h;
     }).join('');
-    html += collapsible('&#x1F527; Tool Calls (' + toolCalls.length + ')', tcHtml, true);
+    html += collapsible('&#x1F527; Tool Calls (' + toolCalls.length + ')', tcHtml, false);
   }
 
   var reasoning = res.reasoning || [];
@@ -333,8 +334,8 @@ function renderAGUIDetail(e) {
 
 function renderGenericDetail(e) {
   var html = '';
-  html += collapsible('&#x2B06;&#xFE0F; Request Body', '<pre>' + escJson(e.request_body) + '</pre>', true);
-  html += collapsible('&#x2B07;&#xFE0F; Response Body', '<pre>' + escJson(e.response_body) + '</pre>', true);
+  html += collapsible('&#x2B06;&#xFE0F; Request Body', '<pre>' + escJson(e.request_body) + '</pre>', false);
+  html += collapsible('&#x2B07;&#xFE0F; Response Body', '<pre>' + escJson(e.response_body) + '</pre>', false);
   return html;
 }
 
@@ -377,6 +378,7 @@ function renderTable(data) {
     var tags = [];
     if (e.ai_insights) tags.push('<span class="badge ai">AI</span>');
     if (e.agui) tags.push('<span class="badge agui">AGUI</span>');
+    if (e.tools) tags.push('<span class="badge tools">Tools</span>');
     if (e.sse) tags.push('<span class="badge sse">SSE</span>');
     return '<tr class="clickable" onclick="showDetail(' + i + ')">'
       + '<td>' + i + '</td><td>' + fmtTime(e.timestamp_ms) + '</td>'
@@ -508,6 +510,14 @@ def _summary_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
     resp = entry.get("response_body")
     if isinstance(resp, dict) and resp.get("object") == "agui.completion":
         summary["agui"] = True
+    # Detect tool calls for badge
+    ai = entry.get("ai_insights")
+    if ai and isinstance(ai, dict):
+        ai_resp = ai.get("response")
+        if isinstance(ai_resp, dict) and ai_resp.get("tool_call_names"):
+            summary["tools"] = True
+    elif isinstance(resp, dict) and resp.get("tool_calls"):
+        summary["tools"] = True
     return summary
 
 
