@@ -1,7 +1,14 @@
-"""Server-Sent Events forwarding, logging, and OpenAI chunk combining."""
+"""Server-Sent Events forwarding, logging, and chunk combining.
+
+Supports OpenAI chat-completion chunks and AGUI (Agent GUI) protocol
+events.  The protocol is auto-detected from the first parseable SSE
+data payload.
+"""
 
 import json
 import time
+
+from .inspection import agui as agui_inspection
 
 
 def maybe_parse_json_text(text):
@@ -198,7 +205,14 @@ def _merge_message_fields(state, message, incoming):
 
 
 def accumulate_sse_event(accumulator, event_lines):
-    """Parse one SSE event and merge JSON OpenAI-style chunks into request state."""
+    """Parse one SSE event and merge it into request state.
+
+    Auto-detects the protocol from the first parseable JSON payload:
+    OpenAI chat-completion chunks (``choices`` list) are merged via the
+    existing OpenAI combiner; AGUI events (``type`` field) are merged
+    via :mod:`capturly.inspection.agui`.  Subsequent events follow the
+    detected protocol.
+    """
     data_lines = []
     for raw_line in event_lines:
         line = raw_line.rstrip("\r\n")
@@ -219,7 +233,29 @@ def accumulate_sse_event(accumulator, event_lines):
         chunk = json.loads(data_text)
     except (TypeError, ValueError):
         return
-    if not isinstance(chunk, dict) or not isinstance(chunk.get("choices"), list):
+    if not isinstance(chunk, dict):
+        return
+
+    # --- Protocol detection on first parseable event ---
+    if accumulator.get("_protocol") is None:
+        if isinstance(chunk.get("choices"), list):
+            accumulator["_protocol"] = "openai"
+        elif agui_inspection.is_agui_event(chunk):
+            # Switch accumulator to AGUI mode, preserving stream_outcome ref
+            outcome = accumulator["stream_outcome"]
+            accumulator.clear()
+            accumulator.update(agui_inspection.new_agui_accumulator())
+            accumulator["stream_outcome"] = outcome
+        else:
+            return
+
+    # --- AGUI path ---
+    if accumulator.get("_protocol") == "agui":
+        agui_inspection.accumulate_agui_event(accumulator, chunk)
+        return
+
+    # --- OpenAI path ---
+    if not isinstance(chunk.get("choices"), list):
         return
 
     valid_choices = [choice for choice in chunk["choices"] if isinstance(choice, dict)]
@@ -236,9 +272,16 @@ def accumulate_sse_event(accumulator, event_lines):
 
 
 def finalize_sse_chunks(accumulator):
-    """Return a complete chat-completion object or None without valid chunks."""
-    if not accumulator["received"]:
+    """Return a combined response body or None without valid chunks.
+
+    Dispatches to the AGUI or OpenAI finalizer based on the detected
+    protocol.  Returns None when no valid events were received.
+    """
+    if not accumulator.get("received"):
         return None
+
+    if accumulator.get("_protocol") == "agui":
+        return agui_inspection.finalize_agui_chunks(accumulator)
 
     response_body = dict(accumulator["top_level"])
     response_body["object"] = "chat.completion"
@@ -261,7 +304,9 @@ def finalize_sse_chunks(accumulator):
     return response_body
 
 
-def respond_sse_stream(handler, response, status, headers=None, event_log_file=None, accumulator=None):
+def respond_sse_stream(
+    handler, response, status, headers=None, event_log_file=None, accumulator=None
+):
     """Forward an SSE response incrementally as lines arrive from the backend."""
     handler.close_connection = True
     handler.send_response(status)

@@ -2,7 +2,7 @@
 
 **Record, replay, and debug any HTTP API — with built-in AI traffic intelligence**
 
-Capturly is an HTTP proxy that captures, replays, and inspects API traffic. It works with any REST/GraphQL endpoint but goes deeper on AI protocols — automatically detecting OpenAI traffic, extracting system prompts, combining streaming chunks, and surfacing tool calls.
+Capturly is an HTTP proxy that captures, replays, and inspects API traffic. It works with any REST/GraphQL endpoint but goes deeper on AI protocols — automatically detecting OpenAI and AGUI (Agent GUI) traffic, extracting system prompts, combining streaming chunks, and surfacing tool calls.
 
 ## Quick Start
 
@@ -29,10 +29,11 @@ capturly --mode log --backend https://api.openai.com --combine-chunks
 ```
 
 The dashboard extracts:
-- System prompts
+- System prompts (including multi-part array content)
 - Tool definitions and tool calls
 - Token usage
 - Complete conversation history (streaming chunks combined)
+- AGUI agent runs: messages, tool calls, reasoning, and state
 
 ### Create Deterministic Test Fixtures
 
@@ -69,6 +70,16 @@ capturly --mode hybrid --backend https://api.example.com
 # First request: hits backend, caches response
 # Subsequent requests: instant replay from cache
 ```
+
+## Dashboard
+
+The built-in web dashboard (default: `http://localhost:9090`) provides:
+
+- **Traffic list** with filtering (All / AI / Non-AI), pagination, and protocol badges (AI, AGUI, SSE)
+- **AI detail view** — system prompts, tool definitions, message history, assistant response, token usage
+- **AGUI detail view** — run metadata, reconstructed messages, tool calls with parsed arguments, reasoning, state snapshots
+- **Generic detail view** — collapsible request/response bodies and headers
+- **Truncate** — clear the traffic log with one click
 
 ## Modes
 

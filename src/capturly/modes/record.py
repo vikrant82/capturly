@@ -35,9 +35,7 @@ def record_and_proxy(handler, method, path, body):
                 sse.respond_sse_stream(handler, response, status_code, response_headers)
             else:
                 response_body = response.read()
-                handler.log_message(
-                    f"✓ Proxied: {status_code} (res: {len(response_body)} bytes)"
-                )
+                handler.log_message(f"✓ Proxied: {status_code} (res: {len(response_body)} bytes)")
                 storage.save_recording(
                     handler, method, path, body, status_code, response_headers, response_body
                 )

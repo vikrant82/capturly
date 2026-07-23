@@ -22,9 +22,7 @@ def main(argv=None):
         type=str,
         help="Backend URL for RECORD/HYBRID/LOG modes (e.g., https://adoption-backend...)",
     )
-    parser.add_argument(
-        "--port", type=int, default=9999, help="Port to listen on (default: 9999)"
-    )
+    parser.add_argument("--port", type=int, default=9999, help="Port to listen on (default: 9999)")
     parser.add_argument(
         "--delay",
         type=int,

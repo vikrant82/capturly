@@ -17,9 +17,7 @@ def build_request(handler, method, path, body):
 def forward_request(handler, method, path, body):
     """Open a backend request using the request's normal or SSE timeout."""
     request = build_request(handler, method, path, body)
-    return urllib.request.urlopen(
-        request, timeout=handler._backend_timeout_seconds()
-    )
+    return urllib.request.urlopen(request, timeout=handler._backend_timeout_seconds())
 
 
 def respond_raw(handler, body, status, headers=None):

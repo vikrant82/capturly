@@ -2,7 +2,7 @@
 
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 try:
     import yaml
@@ -78,9 +78,9 @@ def _interpolate_recursive(data: Any) -> Any:
     return data
 
 
-def _flatten(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     """Flatten nested dicts into dot-notation keys."""
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     for key, value in data.items():
         full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
         if isinstance(value, dict):
@@ -90,7 +90,7 @@ def _flatten(data: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
     return result
 
 
-def load_config(path: str) -> Dict[str, Any]:
+def load_config(path: str) -> dict[str, Any]:
     """Load and parse a YAML config file with env var interpolation.
 
     Returns a flat dict with dot-notation keys for nested values.
@@ -144,7 +144,7 @@ def find_config_file(explicit_path: Optional[str] = None) -> Optional[str]:
     return None
 
 
-def merge_config_with_args(cfg: Dict[str, Any], args: Any) -> Any:
+def merge_config_with_args(cfg: dict[str, Any], args: Any) -> Any:
     """Merge config file values into parsed CLI args. CLI values win.
 
     For each config key, if the corresponding arg attribute is None or equals

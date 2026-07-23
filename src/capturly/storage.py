@@ -29,6 +29,8 @@ def get_recordings_dir():
 
     os.makedirs(RECORDINGS_DIR, exist_ok=True)
     return RECORDINGS_DIR
+
+
 NON_CACHEABLE_STATUS_CODES = {504}
 
 
@@ -71,9 +73,7 @@ def save_recording(handler, method, path, body, status_code, headers, response_b
         "request_body_size": len(body),
         "status_code": status_code,
         "response_headers": {
-            k: v
-            for k, v in headers.items()
-            if k.lower() not in ["date", "server", "connection"]
+            k: v for k, v in headers.items() if k.lower() not in ["date", "server", "connection"]
         },
         "response_body": response_str,
         "body_encoding": body_encoding,

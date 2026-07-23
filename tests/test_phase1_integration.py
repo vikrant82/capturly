@@ -38,36 +38,47 @@ def test_phase1_full_pipeline():
         assert cfg["log.combine_chunks"] is True
 
         # 2. Build a log entry with AI insights (simulating log mode)
-        request_body = json.dumps({
-            "model": "gpt-4o",
-            "messages": [
-                {"role": "system", "content": "You are a code review assistant."},
-                {"role": "user", "content": "Review this PR"},
-            ],
-            "tools": [
-                {"type": "function", "function": {"name": "read_file", "parameters": {}}},
-                {"type": "function", "function": {"name": "comment_on_pr", "parameters": {}}},
-            ],
-        }).encode()
+        request_body = json.dumps(
+            {
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "You are a code review assistant."},
+                    {"role": "user", "content": "Review this PR"},
+                ],
+                "tools": [
+                    {"type": "function", "function": {"name": "read_file", "parameters": {}}},
+                    {"type": "function", "function": {"name": "comment_on_pr", "parameters": {}}},
+                ],
+            }
+        ).encode()
 
-        response_body = json.dumps({
-            "id": "chatcmpl-phase1",
-            "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "I'll review the PR now.",
-                    "tool_calls": [{
-                        "id": "call_abc",
-                        "type": "function",
-                        "function": {"name": "read_file", "arguments": '{"path": "src/main.py"}'},
-                    }],
-                },
-                "finish_reason": "tool_calls",
-            }],
-            "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
-        }).encode()
+        response_body = json.dumps(
+            {
+                "id": "chatcmpl-phase1",
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "I'll review the PR now.",
+                            "tool_calls": [
+                                {
+                                    "id": "call_abc",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": '{"path": "src/main.py"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
+            }
+        ).encode()
 
         entry = log_mode.build_log_entry(
             handler=None,
@@ -83,7 +94,9 @@ def test_phase1_full_pipeline():
         # Verify AI insights
         assert entry["ai_insights"] is not None
         assert entry["ai_insights"]["request"]["model"] == "gpt-4o"
-        assert entry["ai_insights"]["request"]["system_prompts"] == ["You are a code review assistant."]
+        assert entry["ai_insights"]["request"]["system_prompts"] == [
+            "You are a code review assistant."
+        ]
         assert entry["ai_insights"]["request"]["tool_names"] == ["read_file", "comment_on_pr"]
         assert entry["ai_insights"]["request"]["message_count"] == 2
         assert entry["ai_insights"]["response"]["finish_reasons"] == ["tool_calls"]
@@ -152,13 +165,7 @@ def test_phase1_config_merge_with_cli():
     with tempfile.TemporaryDirectory() as tmpdir:
         config_path = os.path.join(tmpdir, "capturly.yaml")
         with open(config_path, "w") as f:
-            f.write(
-                "mode: log\n"
-                "port: 8888\n"
-                "dashboard:\n"
-                "  enabled: true\n"
-                "  port: 7777\n"
-            )
+            f.write("mode: log\nport: 8888\ndashboard:\n  enabled: true\n  port: 7777\n")
 
         cfg = config.load_config(config_path)
 

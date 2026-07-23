@@ -237,9 +237,7 @@ def log_and_proxy(handler, method, path, body):
                 handler, method, path, body, request_headers, e.code, dict(e.headers), error_body
             )
         )
-        handler.log_message(
-            f"📝 Logged backend error: {e.code} (res: {len(error_body)} bytes)"
-        )
+        handler.log_message(f"📝 Logged backend error: {e.code} (res: {len(error_body)} bytes)")
 
     except Exception as e:
         handler.log_message(f"✗ Proxy/log error: {e}")

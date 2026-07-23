@@ -5,7 +5,6 @@ import json
 from capturly import sse
 from capturly.modes import log as log_mode
 
-
 # Realistic OpenAI streaming chunks for a chat completion with tool calls
 SSE_CHUNKS = [
     'data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
@@ -58,14 +57,16 @@ def test_sse_content_combining_end_to_end():
     assert combined["usage"]["total_tokens"] == 15
 
     # Now build the log entry and verify AI insights are present
-    request_body = json.dumps({
-        "model": "gpt-4",
-        "messages": [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "Say hello"},
-        ],
-        "stream": True,
-    }).encode()
+    request_body = json.dumps(
+        {
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Say hello"},
+            ],
+            "stream": True,
+        }
+    ).encode()
 
     entry = log_mode.build_combined_sse_log_entry(
         handler=None,
@@ -107,12 +108,14 @@ def test_sse_tool_call_combining_end_to_end():
     assert json.loads(tool_calls[0]["function"]["arguments"]) == {"location": "SF"}
 
     # Build log entry
-    request_body = json.dumps({
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": "Weather in SF?"}],
-        "tools": [{"type": "function", "function": {"name": "get_weather"}}],
-        "stream": True,
-    }).encode()
+    request_body = json.dumps(
+        {
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Weather in SF?"}],
+            "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+            "stream": True,
+        }
+    ).encode()
 
     entry = log_mode.build_combined_sse_log_entry(
         handler=None,

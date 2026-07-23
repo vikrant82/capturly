@@ -52,6 +52,16 @@ def extract_request_insights(path: str, request_body: bytes) -> Optional[dict]:
             content = msg.get("content")
             if isinstance(content, str) and content:
                 system_prompts.append(content)
+            elif isinstance(content, list):
+                texts = [
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                ]
+                if texts:
+                    system_prompts.append("\n".join(texts))
 
     insights = {
         "model": request.get("model"),
@@ -181,9 +191,7 @@ def detect_openai_protocol(path: str, response_body: bytes) -> Optional[dict]:
     }
 
 
-def build_ai_insights(
-    path: str, request_body: bytes, response_body
-) -> Optional[dict]:
+def build_ai_insights(path: str, request_body: bytes, response_body) -> Optional[dict]:
     """Combine request and response insights into a single ai_insights dict.
 
     Accepts response_body as bytes or a pre-parsed dict (for combined SSE

@@ -5,9 +5,9 @@ import threading
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 
+from . import storage
 from .handler import MockServiceHandler
 from .logger import AsyncTrafficLogger
-from . import storage
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -62,9 +62,7 @@ def run_server(args):
 
     server = ThreadedHTTPServer((args.host, args.port), MockServiceHandler)
 
-    print(
-        f"🚀 Mock server running in {args.mode.upper()} mode on http://{args.host}:{args.port}"
-    )
+    print(f"🚀 Mock server running in {args.mode.upper()} mode on http://{args.host}:{args.port}")
     if args.mode == "record":
         print(f"📡 Proxying to: {args.backend}")
         print(f"💾 Recordings will be saved to: {storage.get_recordings_dir()}")
