@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # For PyPI trusted publishing
+      contents: write  # For creating GitHub Releases
 
     steps:
     - uses: actions/checkout@v4
@@ -31,3 +32,8 @@ jobs:
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       # Uses trusted publishing - configure on PyPI
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        generate_release_notes: true
