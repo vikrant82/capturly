@@ -28,10 +28,24 @@ _INDEX_HTML = """<!DOCTYPE html>
   .controls button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   .controls button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
   .controls button:hover { border-color: #58a6ff; }
+  .filter-row { padding: 8px 24px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .filter-row select, .filter-row input[type="text"] { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 10px; border-radius: 6px; font-size: 13px; outline: none; }
+  .filter-row select:focus, .filter-row input[type="text"]:focus { border-color: #58a6ff; }
+  .filter-row input[type="text"] { width: 220px; }
+  .filter-chip { background: transparent; border: 1px solid #30363d; color: #8b949e; padding: 4px 12px; border-radius: 12px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s; user-select: none; }
+  .filter-chip:hover { border-color: #8b949e; color: #c9d1d9; }
+  .filter-chip.active-ai { background: #1f6feb33; color: #58a6ff; border-color: #1f6feb; }
+  .filter-chip.active-agui { background: #bc8cff33; color: #bc8cff; border-color: #bc8cff; }
+  .filter-chip.active-sse { background: #3fb95033; color: #3fb950; border-color: #3fb950; }
+  .filter-chip.active-tools { background: #d2992233; color: #d29922; border-color: #d29922; }
+  .filter-clear { background: none; border: none; color: #f85149; cursor: pointer; font-size: 12px; padding: 4px 8px; display: none; }
+  .filter-clear:hover { text-decoration: underline; }
   .traffic-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .traffic-table th { text-align: left; padding: 8px 12px; background: #161b22; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; position: sticky; top: 0; }
   .traffic-table td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
   .traffic-table tr:hover td { background: #161b22; }
+  .traffic-table tr.selected td { background: #1f6feb1a; }
+  .traffic-table tr.selected td:first-child { box-shadow: inset 3px 0 0 #1f6feb; }
   .traffic-table tr.clickable { cursor: pointer; }
   .method { font-weight: 700; }
   .method.POST { color: #3fb950; }
@@ -99,10 +113,24 @@ _INDEX_HTML = """<!DOCTYPE html>
 </div>
 <div class="stats-bar" id="stats-bar"></div>
 <div class="controls">
-  <button id="btn-all" class="active" onclick="setFilter(false)">All Traffic</button>
-  <button id="btn-ai" onclick="setFilter(true)">&#x1F916; AI Only</button>
   <button onclick="refresh()">&#x21BB; Refresh</button>
   <button onclick="truncate()" style="margin-left:auto;border-color:#f8514966;color:#f85149">&#x1F5D1; Clear Log</button>
+</div>
+<div class="filter-row">
+  <select id="filter-method" onchange="onFilterChange()">
+    <option value="">All Methods</option>
+    <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+  </select>
+  <input type="text" id="filter-path" placeholder="Filter by path..." oninput="onFilterChange()">
+  <select id="filter-status" onchange="onFilterChange()">
+    <option value="">All Status</option>
+    <option value="2xx">2xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option>
+  </select>
+  <span class="filter-chip" data-tag="ai" onclick="toggleTag(this)">AI</span>
+  <span class="filter-chip" data-tag="agui" onclick="toggleTag(this)">AGUI</span>
+  <span class="filter-chip" data-tag="sse" onclick="toggleTag(this)">SSE</span>
+  <span class="filter-chip" data-tag="tools" onclick="toggleTag(this)">Tools</span>
+  <button class="filter-clear" id="filter-clear" onclick="clearFilters()">&#x2715; Clear</button>
 </div>
 <table class="traffic-table">
   <thead><tr><th>#</th><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Req Size</th><th>Res Size</th><th>Tags</th></tr></thead>
@@ -114,8 +142,10 @@ _INDEX_HTML = """<!DOCTYPE html>
   <div id="detail-content"></div>
 </div>
 <script>
-var aiOnly = false;
+var allEntries = [];
 var entries = [];
+var selectedIdx = null;
+var filters = { method: null, path: '', status: null, tags: [] };
 
 function esc(s) {
   if (s == null) return '';
@@ -378,19 +408,20 @@ function renderStats(stats) {
     + '<div class="stat"><div class="value">' + (stats.models.join(', ') || '-') + '</div><div class="label">Models</div></div>';
 }
 
-function renderTable(data) {
+function renderTable() {
   var tbody = document.getElementById('traffic-table');
-  if (!data.entries.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">No traffic recorded yet</td></tr>';
+  if (!entries.length) {
+    var msg = allEntries.length ? 'No traffic matches the current filters' : 'No traffic recorded yet';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">' + msg + '</td></tr>';
     return;
   }
-  tbody.innerHTML = data.entries.map(function(e, i) {
+  tbody.innerHTML = entries.map(function(e, i) {
     var tags = [];
     if (e.ai_insights) tags.push('<span class="badge ai">AI</span>');
     if (e.agui) tags.push('<span class="badge agui">AGUI</span>');
     if (e.tools) tags.push('<span class="badge tools">Tools</span>');
     if (e.sse) tags.push('<span class="badge sse">SSE</span>');
-    return '<tr class="clickable" onclick="showDetail(' + i + ')">'
+    return '<tr class="clickable' + (e._index === selectedIdx ? ' selected' : '') + '" onclick="showDetail(' + i + ')">'
       + '<td>' + i + '</td><td>' + fmtTime(e.timestamp_ms) + '</td>'
       + '<td><span class="method ' + e.method + '">' + e.method + '</span></td>'
       + '<td>' + esc(e.path) + '</td>'
@@ -400,16 +431,78 @@ function renderTable(data) {
   }).join('');
 }
 
-function setFilter(ai) {
-  aiOnly = ai;
-  document.getElementById('btn-all').className = ai ? '' : 'active';
-  document.getElementById('btn-ai').className = ai ? 'active' : '';
-  refresh();
+function matchesFilters(e) {
+  if (filters.method && e.method !== filters.method) return false;
+  if (filters.path && (e.path || '').toLowerCase().indexOf(filters.path.toLowerCase()) === -1) return false;
+  if (filters.status) {
+    var code = e.status_code || 0;
+    if (filters.status === '2xx' && (code < 200 || code >= 300)) return false;
+    if (filters.status === '4xx' && (code < 400 || code >= 500)) return false;
+    if (filters.status === '5xx' && code < 500) return false;
+  }
+  if (filters.tags.length) {
+    var hasTag = false;
+    for (var t = 0; t < filters.tags.length; t++) {
+      var tag = filters.tags[t];
+      if (tag === 'ai' && e.ai_insights) hasTag = true;
+      else if (tag === 'agui' && e.agui) hasTag = true;
+      else if (tag === 'sse' && e.sse) hasTag = true;
+      else if (tag === 'tools' && e.tools) hasTag = true;
+    }
+    if (!hasTag) return false;
+  }
+  return true;
+}
+
+function applyFilters() {
+  entries = allEntries.filter(matchesFilters);
+  renderTable();
+  updateClearButton();
+}
+
+function onFilterChange() {
+  filters.method = document.getElementById('filter-method').value || null;
+  filters.path = document.getElementById('filter-path').value;
+  filters.status = document.getElementById('filter-status').value || null;
+  applyFilters();
+}
+
+function toggleTag(el) {
+  var tag = el.getAttribute('data-tag');
+  var idx = filters.tags.indexOf(tag);
+  if (idx === -1) {
+    filters.tags.push(tag);
+    el.className = 'filter-chip active-' + tag;
+  } else {
+    filters.tags.splice(idx, 1);
+    el.className = 'filter-chip';
+  }
+  applyFilters();
+}
+
+function updateClearButton() {
+  var active = filters.method || filters.path || filters.status || filters.tags.length;
+  document.getElementById('filter-clear').style.display = active ? 'inline' : 'none';
+}
+
+function clearFilters() {
+  filters = { method: null, path: '', status: null, tags: [] };
+  document.getElementById('filter-method').value = '';
+  document.getElementById('filter-path').value = '';
+  document.getElementById('filter-status').value = '';
+  var chips = document.querySelectorAll('.filter-chip');
+  for (var c = 0; c < chips.length; c++) chips[c].className = 'filter-chip';
+  applyFilters();
 }
 
 function showDetail(idx) {
   var summary = entries[idx];
   if (!summary) return;
+  selectedIdx = summary._index;
+  var rows = document.querySelectorAll('#traffic-table tr.clickable');
+  for (var r = 0; r < rows.length; r++) {
+    rows[r].classList.toggle('selected', r === idx);
+  }
   var panel = document.getElementById('detail-panel');
   var overlay = document.getElementById('overlay');
   var content = document.getElementById('detail-content');
@@ -445,16 +538,16 @@ document.addEventListener('keydown', function(e) {
 
 function refresh() {
   Promise.all([
-    fetch('/api/traffic?limit=200' + (aiOnly ? '&ai=true' : '')),
+    fetch('/api/traffic?limit=200'),
     fetch('/api/stats')
   ]).then(function(responses) {
     return Promise.all(responses.map(function(r) { return r.json(); }));
   }).then(function(results) {
     var traffic = results[0];
     var stats = results[1];
-    entries = traffic.entries;
+    allEntries = traffic.entries;
     renderStats(stats);
-    renderTable(traffic);
+    applyFilters();
     document.getElementById('last-refresh').textContent = 'Updated: ' + new Date().toLocaleTimeString();
   }).catch(function(e) {
     console.error('Refresh failed:', e);
