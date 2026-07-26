@@ -32,6 +32,8 @@ _INDEX_HTML = """<!DOCTYPE html>
   .traffic-table th { text-align: left; padding: 8px 12px; background: #161b22; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; position: sticky; top: 0; }
   .traffic-table td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
   .traffic-table tr:hover td { background: #161b22; }
+  .traffic-table tr.selected td { background: #1f6feb1a; }
+  .traffic-table tr.selected td:first-child { box-shadow: inset 3px 0 0 #1f6feb; }
   .traffic-table tr.clickable { cursor: pointer; }
   .method { font-weight: 700; }
   .method.POST { color: #3fb950; }
@@ -116,6 +118,7 @@ _INDEX_HTML = """<!DOCTYPE html>
 <script>
 var aiOnly = false;
 var entries = [];
+var selectedIdx = null;
 
 function esc(s) {
   if (s == null) return '';
@@ -390,7 +393,7 @@ function renderTable(data) {
     if (e.agui) tags.push('<span class="badge agui">AGUI</span>');
     if (e.tools) tags.push('<span class="badge tools">Tools</span>');
     if (e.sse) tags.push('<span class="badge sse">SSE</span>');
-    return '<tr class="clickable" onclick="showDetail(' + i + ')">'
+    return '<tr class="clickable' + (e._index === selectedIdx ? ' selected' : '') + '" onclick="showDetail(' + i + ')">'
       + '<td>' + i + '</td><td>' + fmtTime(e.timestamp_ms) + '</td>'
       + '<td><span class="method ' + e.method + '">' + e.method + '</span></td>'
       + '<td>' + esc(e.path) + '</td>'
@@ -410,6 +413,11 @@ function setFilter(ai) {
 function showDetail(idx) {
   var summary = entries[idx];
   if (!summary) return;
+  selectedIdx = summary._index;
+  var rows = document.querySelectorAll('#traffic-table tr.clickable');
+  for (var r = 0; r < rows.length; r++) {
+    rows[r].classList.toggle('selected', r === idx);
+  }
   var panel = document.getElementById('detail-panel');
   var overlay = document.getElementById('overlay');
   var content = document.getElementById('detail-content');
