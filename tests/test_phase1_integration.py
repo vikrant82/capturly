@@ -103,10 +103,10 @@ def test_phase1_full_pipeline():
         assert entry["ai_insights"]["response"]["tool_call_names"] == ["read_file"]
         assert entry["ai_insights"]["response"]["usage"]["total_tokens"] == 70
 
-        # 3. Write entry to traffic_log.json and serve via dashboard
-        traffic_log_path = os.path.join(tmpdir, "traffic_log.json")
+        # 3. Write entry to traffic_log.jsonl and serve via dashboard
+        traffic_log_path = os.path.join(tmpdir, "traffic_log.jsonl")
         with open(traffic_log_path, "w") as f:
-            json.dump([entry], f)
+            f.write(json.dumps(entry) + "\n")
 
         server = dashboard.create_dashboard_server(
             entries=None, host="127.0.0.1", port=0, traffic_log_path=traffic_log_path

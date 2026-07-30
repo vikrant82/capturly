@@ -39,12 +39,38 @@ def mock_backend_server():
             self.wfile.write(json.dumps(response).encode())
 
         def do_POST(self):
+            self._handle_with_body("POST")
+
+        def do_PUT(self):
+            self._handle_with_body("PUT")
+
+        def do_PATCH(self):
+            self._handle_with_body("PATCH")
+
+        def do_DELETE(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {"path": self.path, "method": "DELETE"}
+            self.wfile.write(json.dumps(response).encode())
+
+        def do_HEAD(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header("Allow", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+            self.end_headers()
+
+        def _handle_with_body(self, method):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            response = {"path": self.path, "method": "POST", "body": body.decode()}
+            response = {"path": self.path, "method": method, "body": body.decode()}
             self.wfile.write(json.dumps(response).encode())
 
         def log_message(self, format, *args):

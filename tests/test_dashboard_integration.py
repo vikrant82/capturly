@@ -9,10 +9,17 @@ import urllib.request
 from capturly import dashboard
 
 
+def _write_jsonl(path, entries):
+    """Write entries as JSONL (one JSON object per line)."""
+    with open(path, "w") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+
+
 def test_dashboard_reads_from_traffic_log_file():
-    """Dashboard reads live entries from traffic_log.json."""
+    """Dashboard reads live entries from traffic_log.jsonl."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        log_file = os.path.join(tmpdir, "traffic_log.json")
+        log_file = os.path.join(tmpdir, "traffic_log.jsonl")
         entries = [
             {
                 "timestamp_ms": 1000,
@@ -22,8 +29,7 @@ def test_dashboard_reads_from_traffic_log_file():
             },
             {"timestamp_ms": 2000, "method": "GET", "path": "/api/health", "status_code": 200},
         ]
-        with open(log_file, "w") as f:
-            json.dump(entries, f)
+        _write_jsonl(log_file, entries)
 
         server = dashboard.create_dashboard_server(
             entries=None, host="127.0.0.1", port=0, traffic_log_path=log_file
@@ -43,13 +49,13 @@ def test_dashboard_reads_from_traffic_log_file():
 
 
 def test_dashboard_live_updates():
-    """Dashboard reflects new entries appended to traffic_log.json."""
+    """Dashboard reflects new entries appended to traffic_log.jsonl."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        log_file = os.path.join(tmpdir, "traffic_log.json")
-        with open(log_file, "w") as f:
-            json.dump(
-                [{"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200}], f
-            )
+        log_file = os.path.join(tmpdir, "traffic_log.jsonl")
+        _write_jsonl(
+            log_file,
+            [{"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200}],
+        )
 
         server = dashboard.create_dashboard_server(
             entries=None, host="127.0.0.1", port=0, traffic_log_path=log_file
@@ -59,14 +65,13 @@ def test_dashboard_live_updates():
         thread.start()
 
         try:
-            # Append a new entry
-            with open(log_file, "w") as f:
-                json.dump(
-                    [
-                        {"timestamp_ms": 1000, "method": "GET", "path": "/a", "status_code": 200},
-                        {"timestamp_ms": 2000, "method": "POST", "path": "/b", "status_code": 201},
-                    ],
-                    f,
+            # Append a new entry (simulates proxy writing)
+            with open(log_file, "a") as f:
+                f.write(
+                    json.dumps(
+                        {"timestamp_ms": 2000, "method": "POST", "path": "/b", "status_code": 201}
+                    )
+                    + "\n"
                 )
 
             url = f"http://127.0.0.1:{port}/api/traffic"
@@ -78,9 +83,9 @@ def test_dashboard_live_updates():
 
 
 def test_dashboard_missing_log_file():
-    """Dashboard returns empty list when traffic_log.json doesn't exist."""
+    """Dashboard returns empty list when traffic_log.jsonl doesn't exist."""
     server = dashboard.create_dashboard_server(
-        entries=None, host="127.0.0.1", port=0, traffic_log_path="/nonexistent/traffic_log.json"
+        entries=None, host="127.0.0.1", port=0, traffic_log_path="/nonexistent/traffic_log.jsonl"
     )
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

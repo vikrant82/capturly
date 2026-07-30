@@ -36,6 +36,15 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._handle_request("DELETE")
 
+    def do_PATCH(self):
+        self._handle_request("PATCH")
+
+    def do_HEAD(self):
+        self._handle_request("HEAD")
+
+    def do_OPTIONS(self):
+        self._handle_request("OPTIONS")
+
     def _handle_request(self, method):
         """Read the request body and delegate it to the configured mode."""
         content_length = int(self.headers.get("Content-Length", 0))
@@ -175,11 +184,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     def _finalize_sse_chunks(self, accumulator):
         return sse.finalize_sse_chunks(accumulator)
 
-    def _read_traffic_log_entries(self):
-        return storage.read_traffic_log_entries()
-
-    def _write_traffic_log_entries(self, entries):
-        return storage.write_traffic_log_entries(entries)
 
     def _enqueue_traffic_log_entry(self, entry):
         return storage.enqueue_traffic_log_entry(self, entry)
