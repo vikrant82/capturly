@@ -119,7 +119,7 @@ _INDEX_HTML = """<!DOCTYPE html>
 <div class="filter-row">
   <select id="filter-method" onchange="onFilterChange()">
     <option value="">All Methods</option>
-    <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+    <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
   </select>
   <input type="text" id="filter-path" placeholder="Filter by path..." oninput="onFilterChange()">
   <select id="filter-status" onchange="onFilterChange()">
@@ -729,26 +729,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def _truncate_traffic_log(path: str) -> None:
-    """Overwrite the traffic log file with an empty list."""
+    """Truncate the traffic log file to empty."""
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump([], f)
+            f.truncate(0)
     except OSError:
         pass
 
 
 def _read_traffic_log(path: str) -> list[dict[str, Any]]:
-    """Read traffic log entries from a JSON file. Returns [] on any error."""
+    """Read traffic log entries from a JSONL file. Returns [] on any error."""
     if not os.path.isfile(path):
         return []
+    entries: list[dict[str, Any]] = []
     try:
         with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return data
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict):
+                        entries.append(obj)
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
         return []
-    except (json.JSONDecodeError, OSError):
-        return []
+    return entries
 
 
 def create_dashboard_server(
@@ -767,7 +775,7 @@ def create_dashboard_server(
         entries: Static list of traffic log entry dicts (or None for file mode).
         host: Bind address.
         port: Bind port (0 for random available port in tests).
-        traffic_log_path: Path to traffic_log.json for live reading.
+        traffic_log_path: Path to traffic_log.jsonl for live reading.
 
     Returns:
         An HTTPServer instance ready to serve_forever().
