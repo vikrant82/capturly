@@ -49,6 +49,7 @@ def run_server(args):
     """Configure the handler, run the server, and shut down its logger."""
     MockServiceHandler.mode = args.mode
     MockServiceHandler.backend_url = args.backend
+    MockServiceHandler.pipe_name = getattr(args, "pipe", None)
     MockServiceHandler.replay_delay_ms = args.delay
     MockServiceHandler.combine_chunks = args.combine_chunks if args.mode == "log" else False
     MockServiceHandler.traffic_logger = (

@@ -14,6 +14,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     mode = "replay"
     backend_url = None
+    pipe_name = None
     replay_delay_ms = 0
     combine_chunks = False
     log_file_lock = threading.Lock()

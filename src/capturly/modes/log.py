@@ -9,6 +9,19 @@ from .. import proxy, sse, storage, utils
 from ..inspection import openai as openai_inspection
 
 
+def _source_meta(handler):
+    """Return source-identification fields stamped onto every traffic entry.
+
+    ``source_name`` is the friendly pipe name (``--pipe``); ``backend_url`` is
+    the backend this instance proxies. Either may be None. The dashboard
+    resolves a display label as ``source_name or backend_url or "default"``.
+    """
+    return {
+        "source_name": getattr(handler, "pipe_name", None),
+        "backend_url": getattr(handler, "backend_url", None),
+    }
+
+
 def build_sse_log_entry(
     handler,
     method,
@@ -22,6 +35,7 @@ def build_sse_log_entry(
 ):
     """Build SSE request metadata without writing the shared traffic log."""
     return {
+        **_source_meta(handler),
         "timestamp_ms": timestamp_ms or int(time.time() * 1000),
         "method": method,
         "path": path,
@@ -45,10 +59,18 @@ def build_log_entry(
     status_code,
     response_headers,
     response_body,
+    started_timestamp_ms=None,
 ):
-    """Build full request/response metadata without writing the shared log."""
+    """Build full request/response metadata without writing the shared log.
+
+    When ``started_timestamp_ms`` is provided, the entry includes a
+    ``duration_ms`` field measuring wall-clock time from request start to
+    completion.
+    """
+    completed_timestamp_ms = int(time.time() * 1000)
     entry = {
-        "timestamp_ms": int(time.time() * 1000),
+        **_source_meta(handler),
+        "timestamp_ms": completed_timestamp_ms,
         "method": method,
         "path": path,
         "cache_key": storage.get_cache_key(method, path, request_body),
@@ -60,6 +82,8 @@ def build_log_entry(
         "response_body": utils.body_for_log_entry(response_body, response_headers),
         "response_body_size": len(response_body),
     }
+    if started_timestamp_ms is not None:
+        entry["duration_ms"] = max(0, completed_timestamp_ms - started_timestamp_ms)
     ai_insights = openai_inspection.build_ai_insights(path, request_body, response_body)
     if ai_insights is not None:
         entry["ai_insights"] = ai_insights
@@ -98,6 +122,7 @@ def build_combined_sse_log_entry(
             ),
         }
     entry = {
+        **_source_meta(handler),
         "timestamp_ms": completed_timestamp_ms,
         "method": method,
         "path": path,
@@ -115,6 +140,7 @@ def build_combined_sse_log_entry(
         "sse_aborted": stream_outcome["aborted"],
         "sse_started_timestamp_ms": started_timestamp_ms,
         "sse_duration_ms": max(0, completed_timestamp_ms - started_timestamp_ms),
+        "duration_ms": max(0, completed_timestamp_ms - started_timestamp_ms),
     }
     if stream_outcome["error"]:
         entry["sse_error"] = stream_outcome["error"]
@@ -131,6 +157,7 @@ def log_and_proxy(handler, method, path, body):
         return
 
     request_headers = {k: v for k, v in handler.headers.items()}
+    started_timestamp_ms = int(time.time() * 1000)
 
     try:
         with proxy.forward_request(handler, method, path, body) as response:
@@ -223,6 +250,7 @@ def log_and_proxy(handler, method, path, body):
                         status_code,
                         response_headers,
                         response_body,
+                        started_timestamp_ms,
                     )
                 )
                 handler.log_message(
@@ -234,7 +262,15 @@ def log_and_proxy(handler, method, path, body):
         proxy.respond_raw(handler, error_body, e.code, dict(e.headers))
         handler._enqueue_traffic_log_entry(
             build_log_entry(
-                handler, method, path, body, request_headers, e.code, dict(e.headers), error_body
+                handler,
+                method,
+                path,
+                body,
+                request_headers,
+                e.code,
+                dict(e.headers),
+                error_body,
+                started_timestamp_ms,
             )
         )
         handler.log_message(f"📝 Logged backend error: {e.code} (res: {len(error_body)} bytes)")

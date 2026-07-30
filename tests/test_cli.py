@@ -27,3 +27,14 @@ def test_cli_missing_backend_in_record_mode():
     )
     assert result.returncode != 0
     assert "backend" in result.stderr.lower()
+
+
+def test_cli_help_shows_pipe_flag():
+    """CLI --help documents the --pipe flag."""
+    result = subprocess.run(
+        [sys.executable, "-m", "capturly", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--pipe" in result.stdout

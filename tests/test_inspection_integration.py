@@ -166,3 +166,71 @@ def test_build_ai_insights_returns_none_for_non_ai():
     """build_ai_insights returns None when neither request nor response is AI."""
     result = openai.build_ai_insights("/api/users", b"{}", b"{}")
     assert result is None
+
+
+def _make_source_handler(pipe_name=None, backend_url=None):
+    handler = Mock()
+    handler.log_message = Mock()
+    handler.pipe_name = pipe_name
+    handler.backend_url = backend_url
+    return handler
+
+
+def test_build_log_entry_includes_source_and_duration():
+    """build_log_entry stamps source fields and computes duration_ms."""
+    handler = _make_source_handler("adoption", "https://api.example.com")
+    started = 1000
+    entry = log.build_log_entry(
+        handler, "GET", "/x", b"{}", {}, 200, {}, b"{}", started_timestamp_ms=started
+    )
+    assert entry["source_name"] == "adoption"
+    assert entry["backend_url"] == "https://api.example.com"
+    assert entry["duration_ms"] == entry["timestamp_ms"] - started
+    assert entry["duration_ms"] >= 0
+
+
+def test_build_log_entry_omits_duration_without_start():
+    """build_log_entry leaves out duration_ms when no start time is given."""
+    handler = _make_source_handler("adoption", "https://api.example.com")
+    entry = log.build_log_entry(handler, "GET", "/x", b"{}", {}, 200, {}, b"{}")
+    assert "duration_ms" not in entry
+    assert entry["source_name"] == "adoption"
+
+
+def test_build_log_entry_source_defaults_to_none():
+    """Unnamed pipes stamp a None source_name; backend_url is still recorded."""
+    handler = _make_source_handler(None, "https://api.example.com")
+    entry = log.build_log_entry(handler, "GET", "/x", b"{}", {}, 200, {}, b"{}")
+    assert entry["source_name"] is None
+    assert entry["backend_url"] == "https://api.example.com"
+
+
+def test_build_combined_sse_duration_matches_sse_duration():
+    """Combined-SSE entries expose duration_ms equal to sse_duration_ms."""
+    handler = _make_source_handler("billing", "https://b.example.com")
+    stream_outcome = {"aborted": False, "error": None}
+    entry = log.build_combined_sse_log_entry(
+        handler,
+        "POST",
+        "/sse",
+        b"{}",
+        {},
+        200,
+        {},
+        {"combined_completion": "ok"},
+        1000,
+        stream_outcome,
+    )
+    assert entry["source_name"] == "billing"
+    assert entry["duration_ms"] == entry["sse_duration_ms"]
+
+
+def test_build_sse_log_entry_has_source_no_duration():
+    """Non-combined SSE entries carry source fields but no duration_ms."""
+    handler = _make_source_handler("billing", "https://b.example.com")
+    entry = log.build_sse_log_entry(
+        handler, "POST", "/sse", b"{}", {}, 200, {}, "events.jsonl", timestamp_ms=1000
+    )
+    assert entry["source_name"] == "billing"
+    assert entry["backend_url"] == "https://b.example.com"
+    assert "duration_ms" not in entry

@@ -162,6 +162,7 @@ def merge_config_with_args(cfg: dict[str, Any], args: Any) -> Any:
     key_map = {
         "mode": "mode",
         "backend": "backend",
+        "pipe": "pipe",
         "port": "port",
         "host": "host",
         "delay": "delay",

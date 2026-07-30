@@ -149,3 +149,21 @@ def test_merge_config_fills_defaults():
 
     assert merged.mode == "log"  # config wins (CLI was at default)
     assert merged.port == 8080  # config wins (CLI was at default)
+
+
+def test_merge_config_sets_pipe_when_cli_unset():
+    """Config pipe fills in when CLI --pipe is not provided."""
+    import argparse
+
+    args = argparse.Namespace(pipe=None)
+    merged = config.merge_config_with_args({"pipe": "adoption"}, args)
+    assert merged.pipe == "adoption"
+
+
+def test_merge_config_cli_pipe_takes_priority():
+    """Explicit CLI --pipe wins over the config file value."""
+    import argparse
+
+    args = argparse.Namespace(pipe="cli-name")
+    merged = config.merge_config_with_args({"pipe": "config-name"}, args)
+    assert merged.pipe == "cli-name"
