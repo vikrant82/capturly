@@ -61,6 +61,7 @@ _INDEX_HTML = """<!DOCTYPE html>
   .badge.sse { background: #3fb95033; color: #3fb950; border: 1px solid #3fb950; }
   .badge.agui { background: #bc8cff33; color: #bc8cff; border: 1px solid #bc8cff; }
   .badge.tools { background: #d2992233; color: #d29922; border: 1px solid #d29922; }
+  .badge.source { background: #39c5cf33; color: #39c5cf; border: 1px solid #39c5cf; }
   .empty { text-align: center; padding: 48px; color: #8b949e; }
   .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 99; }
   .overlay.open { display: block; }
@@ -121,6 +122,9 @@ _INDEX_HTML = """<!DOCTYPE html>
     <option value="">All Methods</option>
     <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
   </select>
+  <select id="filter-source" onchange="onFilterChange()">
+    <option value="">All Sources</option>
+  </select>
   <input type="text" id="filter-path" placeholder="Filter by path..." oninput="onFilterChange()">
   <select id="filter-status" onchange="onFilterChange()">
     <option value="">All Status</option>
@@ -133,7 +137,7 @@ _INDEX_HTML = """<!DOCTYPE html>
   <button class="filter-clear" id="filter-clear" onclick="clearFilters()">&#x2715; Clear</button>
 </div>
 <table class="traffic-table">
-  <thead><tr><th>#</th><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Req Size</th><th>Res Size</th><th>Tags</th></tr></thead>
+  <thead><tr><th>#</th><th>Time</th><th>Source</th><th>Method</th><th>Path</th><th>Status</th><th>Duration</th><th>Req Size</th><th>Res Size</th><th>Tags</th></tr></thead>
   <tbody id="traffic-table"></tbody>
 </table>
 <div class="overlay" id="overlay" onclick="closeDetail()"></div>
@@ -145,7 +149,7 @@ _INDEX_HTML = """<!DOCTYPE html>
 var allEntries = [];
 var entries = [];
 var selectedIdx = null;
-var filters = { method: null, path: '', status: null, tags: [] };
+var filters = { method: null, path: '', status: null, source: null, tags: [] };
 
 function esc(s) {
   if (s == null) return '';
@@ -167,6 +171,17 @@ function fmtSize(b) {
   if (b == null) return '-';
   if (b < 1024) return b + ' B';
   return (b / 1024).toFixed(1) + ' KB';
+}
+
+function fmtDuration(ms) {
+  if (ms == null) return '-';
+  if (ms < 1) return '<1ms';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  return (ms / 1000).toFixed(1) + 's';
+}
+
+function sourceLabel(e) {
+  return e.source_name || e.backend_url || 'default';
 }
 
 function statusClass(code) {
@@ -248,7 +263,7 @@ function renderMessage(msg) {
 }
 
 function renderOverview(e) {
-  var lines = 'Status: ' + e.status_code + '\\nTime: ' + fmtTime(e.timestamp_ms) + '\\nRequest: ' + fmtSize(e.request_body_size) + '  |  Response: ' + fmtSize(e.response_body_size);
+  var lines = 'Source: ' + sourceLabel(e) + '\\nStatus: ' + e.status_code + '\\nTime: ' + fmtTime(e.timestamp_ms) + '\\nDuration: ' + fmtDuration(e.duration_ms) + '\\nRequest: ' + fmtSize(e.request_body_size) + '  |  Response: ' + fmtSize(e.response_body_size);
   if (e.sse) {
     lines += '\\nSSE: ' + (e.sse_combine_status || 'streaming');
     if (e.sse_duration_ms != null) lines += '  (' + e.sse_duration_ms + 'ms)';
@@ -412,7 +427,7 @@ function renderTable() {
   var tbody = document.getElementById('traffic-table');
   if (!entries.length) {
     var msg = allEntries.length ? 'No traffic matches the current filters' : 'No traffic recorded yet';
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">' + msg + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">' + msg + '</td></tr>';
     return;
   }
   tbody.innerHTML = entries.map(function(e, i) {
@@ -423,9 +438,11 @@ function renderTable() {
     if (e.sse) tags.push('<span class="badge sse">SSE</span>');
     return '<tr class="clickable' + (e._index === selectedIdx ? ' selected' : '') + '" onclick="showDetail(' + i + ')">'
       + '<td>' + i + '</td><td>' + fmtTime(e.timestamp_ms) + '</td>'
+      + '<td><span class="badge source">' + esc(sourceLabel(e)) + '</span></td>'
       + '<td><span class="method ' + e.method + '">' + e.method + '</span></td>'
       + '<td>' + esc(e.path) + '</td>'
       + '<td><span class="status ' + statusClass(e.status_code) + '">' + e.status_code + '</span></td>'
+      + '<td>' + fmtDuration(e.duration_ms) + '</td>'
       + '<td>' + fmtSize(e.request_body_size) + '</td><td>' + fmtSize(e.response_body_size) + '</td>'
       + '<td>' + tags.join(' ') + '</td></tr>';
   }).join('');
@@ -433,6 +450,7 @@ function renderTable() {
 
 function matchesFilters(e) {
   if (filters.method && e.method !== filters.method) return false;
+  if (filters.source && sourceLabel(e) !== filters.source) return false;
   if (filters.path && (e.path || '').toLowerCase().indexOf(filters.path.toLowerCase()) === -1) return false;
   if (filters.status) {
     var code = e.status_code || 0;
@@ -464,6 +482,7 @@ function onFilterChange() {
   filters.method = document.getElementById('filter-method').value || null;
   filters.path = document.getElementById('filter-path').value;
   filters.status = document.getElementById('filter-status').value || null;
+  filters.source = document.getElementById('filter-source').value || null;
   applyFilters();
 }
 
@@ -481,15 +500,16 @@ function toggleTag(el) {
 }
 
 function updateClearButton() {
-  var active = filters.method || filters.path || filters.status || filters.tags.length;
+  var active = filters.method || filters.path || filters.status || filters.source || filters.tags.length;
   document.getElementById('filter-clear').style.display = active ? 'inline' : 'none';
 }
 
 function clearFilters() {
-  filters = { method: null, path: '', status: null, tags: [] };
+  filters = { method: null, path: '', status: null, source: null, tags: [] };
   document.getElementById('filter-method').value = '';
   document.getElementById('filter-path').value = '';
   document.getElementById('filter-status').value = '';
+  document.getElementById('filter-source').value = '';
   var chips = document.querySelectorAll('.filter-chip');
   for (var c = 0; c < chips.length; c++) chips[c].className = 'filter-chip';
   applyFilters();
@@ -536,6 +556,24 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeDetail();
 });
 
+function populateSourceFilter() {
+  var select = document.getElementById('filter-source');
+  var seen = {};
+  var labels = [];
+  for (var i = 0; i < allEntries.length; i++) {
+    var label = sourceLabel(allEntries[i]);
+    if (!seen[label]) { seen[label] = true; labels.push(label); }
+  }
+  labels.sort();
+  var current = filters.source || '';
+  var html = '<option value="">All Sources</option>';
+  for (var j = 0; j < labels.length; j++) {
+    html += '<option' + (labels[j] === current ? ' selected' : '') + '>' + esc(labels[j]) + '</option>';
+  }
+  select.innerHTML = html;
+  filters.source = select.value || null;
+}
+
 function refresh() {
   Promise.all([
     fetch('/api/traffic?limit=200'),
@@ -546,6 +584,8 @@ function refresh() {
     var traffic = results[0];
     var stats = results[1];
     allEntries = traffic.entries;
+    allEntries.sort(function(a, b) { return (b.timestamp_ms || 0) - (a.timestamp_ms || 0); });
+    populateSourceFilter();
     renderStats(stats);
     applyFilters();
     document.getElementById('last-refresh').textContent = 'Updated: ' + new Date().toLocaleTimeString();
@@ -605,6 +645,9 @@ def _summary_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
         "status_code": entry.get("status_code"),
         "request_body_size": entry.get("request_body_size"),
         "response_body_size": entry.get("response_body_size"),
+        "source_name": entry.get("source_name"),
+        "backend_url": entry.get("backend_url"),
+        "duration_ms": entry.get("duration_ms"),
     }
     if "ai_insights" in entry:
         summary["ai_insights"] = entry["ai_insights"]

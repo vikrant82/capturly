@@ -1,11 +1,12 @@
 """Tests for the dashboard backend API."""
 
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
 
-from capturly import dashboard
+from capturly import dashboard, storage
 
 
 def _start_dashboard(entries, port=0):
@@ -153,5 +154,104 @@ def test_dashboard_serves_html():
             assert "stats" in content.lower()
             assert "/api/traffic" in content
             assert "/api/stats" in content
+    finally:
+        server.shutdown()
+
+
+def test_summary_entry_includes_source_and_duration():
+    """_summary_entry surfaces source_name, backend_url, and duration_ms."""
+    entry = {
+        "timestamp_ms": 1000,
+        "method": "GET",
+        "path": "/a",
+        "status_code": 200,
+        "source_name": "adoption",
+        "backend_url": "https://a.example.com",
+        "duration_ms": 42,
+    }
+    summary = dashboard._summary_entry(entry, 0)
+    assert summary["source_name"] == "adoption"
+    assert summary["backend_url"] == "https://a.example.com"
+    assert summary["duration_ms"] == 42
+
+
+def test_api_traffic_summary_carries_source_fields():
+    """GET /api/traffic summaries include source and duration fields."""
+    entries = [
+        {
+            "timestamp_ms": 1000,
+            "method": "GET",
+            "path": "/a",
+            "status_code": 200,
+            "source_name": "adoption",
+            "backend_url": "https://a.example.com",
+            "duration_ms": 10,
+        }
+    ]
+    server, port = _start_dashboard(entries)
+    try:
+        data = _get_json(port, "/api/traffic")
+        e = data["entries"][0]
+        assert e["source_name"] == "adoption"
+        assert e["backend_url"] == "https://a.example.com"
+        assert e["duration_ms"] == 10
+    finally:
+        server.shutdown()
+
+
+def test_dashboard_html_has_source_and_duration_ui():
+    """The served HTML includes the Source/Duration columns and source filter."""
+    server, port = _start_dashboard(SAMPLE_ENTRIES)
+    try:
+        url = f"http://127.0.0.1:{port}/"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            content = resp.read().decode()
+            assert "filter-source" in content
+            assert "<th>Source</th>" in content
+            assert "<th>Duration</th>" in content
+            assert "fmtDuration" in content
+            assert "badge source" in content
+            assert "sourceLabel" in content
+    finally:
+        server.shutdown()
+
+
+def test_dashboard_aggregates_multiple_sources_from_shared_log(temp_recordings_dir):
+    """A dashboard reading a shared log shows traffic from every pipe."""
+    storage.append_traffic_log_entry(
+        {
+            "timestamp_ms": 1000,
+            "method": "GET",
+            "path": "/a",
+            "status_code": 200,
+            "source_name": "adoption",
+            "backend_url": "https://a.example.com",
+            "duration_ms": 10,
+        }
+    )
+    storage.append_traffic_log_entry(
+        {
+            "timestamp_ms": 2000,
+            "method": "POST",
+            "path": "/b",
+            "status_code": 201,
+            "source_name": "billing",
+            "backend_url": "https://b.example.com",
+            "duration_ms": 20,
+        }
+    )
+    log_path = os.path.join(str(temp_recordings_dir), storage.TRAFFIC_LOG_FILENAME)
+    server = dashboard.create_dashboard_server(
+        entries=None, host="127.0.0.1", port=0, traffic_log_path=log_path
+    )
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        data = _get_json(port, "/api/traffic")
+        by_source = {e["source_name"]: e for e in data["entries"]}
+        assert set(by_source) == {"adoption", "billing"}
+        assert by_source["adoption"]["backend_url"] == "https://a.example.com"
+        assert by_source["billing"]["duration_ms"] == 20
     finally:
         server.shutdown()
