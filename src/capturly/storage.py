@@ -84,39 +84,46 @@ def save_recording(handler, method, path, body, status_code, headers, response_b
     handler.log_message(f"💾 Saved recording: {cache_key[:16]}...")
 
 
+TRAFFIC_LOG_FILENAME = "traffic_log.jsonl"
+
+
+def append_traffic_log_entry(entry):
+    """Append a single entry as one JSONL line. Safe for concurrent processes."""
+    log_file = os.path.join(get_recordings_dir(), TRAFFIC_LOG_FILENAME)
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
 def read_traffic_log_entries():
-    """Read current traffic-log entries from disk."""
-    log_file = os.path.join(get_recordings_dir(), "traffic_log.json")
+    """Read traffic-log entries from JSONL file, skipping malformed lines."""
+    log_file = os.path.join(get_recordings_dir(), TRAFFIC_LOG_FILENAME)
     if not os.path.exists(log_file):
         return []
 
+    entries = []
     with open(log_file, encoding="utf-8") as f:
-        content = f.read()
-        if not content.strip():
-            return []
-        return json.loads(content)
-
-
-def write_traffic_log_entries(entries):
-    """Atomically publish traffic-log JSON entries."""
-    log_file = os.path.join(get_recordings_dir(), "traffic_log.json")
-    atomic_write_json(log_file, entries, ensure_ascii=False, indent=2)
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return entries
 
 
 def enqueue_traffic_log_entry(handler, entry):
-    """Queue a traffic-log write, falling back to synchronous persistence."""
+    """Queue a traffic-log write, falling back to synchronous append."""
     logger = handler.traffic_logger
     if logger:
         logger.enqueue(entry)
         return
 
     with handler.log_file_lock:
-        try:
-            entries = read_traffic_log_entries()
-        except (json.JSONDecodeError, OSError):
-            entries = []
-        entries.append(entry)
-        write_traffic_log_entries(entries)
+        append_traffic_log_entry(entry)
 
 
 def enqueue_sse_event_log(handler, event_log_file, sequence, event_lines):
@@ -133,5 +140,4 @@ def enqueue_sse_event_log(handler, event_log_file, sequence, event_lines):
 _atomic_write_json = atomic_write_json
 _get_cache_key = get_cache_key
 _save_recording = save_recording
-_read_traffic_log_entries = read_traffic_log_entries
-_write_traffic_log_entries = write_traffic_log_entries
+

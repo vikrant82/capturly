@@ -1,6 +1,5 @@
 """Asynchronous traffic and SSE event persistence."""
 
-import json
 import os
 import queue
 import sys
@@ -18,7 +17,7 @@ class AsyncTrafficLogger:
         self.thread = threading.Thread(target=self._run, name="traffic-log-writer", daemon=True)
         self.handler = object.__new__(handler_cls)
         self.handler.log_message = lambda *args, **kwargs: None
-        self.log_file = os.path.join(storage.get_recordings_dir(), "traffic_log.json")
+        self.log_file = os.path.join(storage.get_recordings_dir(), storage.TRAFFIC_LOG_FILENAME)
         self.thread.start()
 
     def enqueue(self, entry):
@@ -32,28 +31,22 @@ class AsyncTrafficLogger:
         self.thread.join(timeout=5)
 
     def _run(self):
-        entries = self._load_entries()
-        if entries is None:
-            entries = []
-
         while True:
             kind, entry = self.queue.get()
             if kind == "stop":
                 self.queue.task_done()
-                self._drain(entries)
+                self._drain()
                 return
 
             if kind == "entry":
-                entries = self._refresh_entries_from_disk(entries)
-                entries.append(entry)
-                self._write_entries(entries)
+                self._append_entry(entry)
             elif kind == "sse_event":
                 event_log_file, sequence, event_lines = entry
                 self._write_sse_event(event_log_file, sequence, event_lines)
 
             self.queue.task_done()
 
-    def _drain(self, entries):
+    def _drain(self):
         while True:
             try:
                 kind, entry = self.queue.get_nowait()
@@ -61,39 +54,17 @@ class AsyncTrafficLogger:
                 return
 
             if kind == "entry":
-                entries = self._refresh_entries_from_disk(entries)
-                entries.append(entry)
-                self._write_entries(entries)
+                self._append_entry(entry)
             elif kind == "sse_event":
                 event_log_file, sequence, event_lines = entry
                 self._write_sse_event(event_log_file, sequence, event_lines)
             self.queue.task_done()
 
-    def _load_entries(self):
+    def _append_entry(self, entry):
         try:
-            return self.handler._read_traffic_log_entries()
-        except (ValueError, OSError):
-            return None
-
-    def _refresh_entries_from_disk(self, entries):
-        """Reload entries from disk to honor external modifications (truncation, deletion)."""
-        if not os.path.exists(self.log_file):
-            return []
-
-        try:
-            with open(self.log_file, encoding="utf-8") as f:
-                content = f.read()
-                if not content.strip():
-                    return []
-                return json.loads(content)
-        except (json.JSONDecodeError, OSError):
-            return []
-
-    def _write_entries(self, entries):
-        try:
-            self.handler._write_traffic_log_entries(entries)
+            storage.append_traffic_log_entry(entry)
         except Exception as e:
-            sys.stderr.write(f"[LOG] Failed to write traffic_log.json: {e}\n")
+            sys.stderr.write(f"[LOG] Failed to append traffic log entry: {e}\n")
 
     def _write_sse_event(self, event_log_file, sequence, event_lines):
         try:

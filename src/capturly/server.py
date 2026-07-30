@@ -57,7 +57,7 @@ def run_server(args):
 
     # Start dashboard if requested
     if getattr(args, "dashboard", False):
-        traffic_log_path = os.path.join(storage.get_recordings_dir(), "traffic_log.json")
+        traffic_log_path = os.path.join(storage.get_recordings_dir(), storage.TRAFFIC_LOG_FILENAME)
         _start_dashboard(args.dashboard_port, traffic_log_path)
 
     server = ThreadedHTTPServer((args.host, args.port), MockServiceHandler)
