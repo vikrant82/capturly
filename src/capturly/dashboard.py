@@ -104,6 +104,24 @@ _INDEX_HTML = """<!DOCTYPE html>
   .tool-card .tool-name { color: #bc8cff; font-weight: 600; font-size: 13px; font-family: monospace; }
   .tool-card .tool-desc { color: #8b949e; font-size: 12px; margin-top: 4px; }
   .tool-card pre { margin-top: 6px; font-size: 11px; }
+  .json-tree { background: #0d1117; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.6; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+  .json-tree .json-copy-src { display: none; }
+  .j-row { cursor: pointer; border-radius: 3px; }
+  .j-row:hover { background: #161b22; }
+  .j-toggle { display: inline-block; width: 14px; color: #8b949e; font-size: 9px; user-select: none; }
+  .j-toggle::before { content: '\\25BC'; }
+  .j-node.collapsed > .j-row > .j-toggle::before { content: '\\25B6'; }
+  .j-node.collapsed > .j-children, .j-node.collapsed > .j-closeline { display: none; }
+  .j-preview { color: #8b949e; font-style: italic; }
+  .j-node:not(.collapsed) > .j-row > .j-preview { display: none; }
+  .j-key { color: #79c0ff; }
+  .j-str { color: #a5d6ff; }
+  .j-num { color: #d2a8ff; }
+  .j-bool { color: #ff7b72; }
+  .j-null { color: #8b949e; font-style: italic; }
+  .j-brace { color: #e6edf3; }
+  .j-children { padding-left: 18px; }
+  .tool-card .json-tree { margin-top: 6px; font-size: 11px; padding: 8px; }
   .loading { text-align: center; padding: 48px; color: #8b949e; font-size: 14px; }
 </style>
 </head>
@@ -192,7 +210,22 @@ function statusClass(code) {
 
 function copySection(btn) {
   const body = btn.closest('details').querySelector('.detail-body');
-  const text = body.innerText || body.textContent;
+  // Clone offscreen and substitute each JSON tree with its full raw JSON,
+  // so copying is complete regardless of which tree nodes are collapsed.
+  var holder = document.createElement('div');
+  holder.style.position = 'absolute';
+  holder.style.left = '-9999px';
+  holder.appendChild(body.cloneNode(true));
+  var trees = holder.querySelectorAll('.json-tree');
+  for (var i = 0; i < trees.length; i++) {
+    var src = trees[i].querySelector('.json-copy-src');
+    var pre = document.createElement('pre');
+    pre.textContent = src ? src.textContent : '';
+    trees[i].parentNode.replaceChild(pre, trees[i]);
+  }
+  document.body.appendChild(holder);
+  const text = holder.innerText || holder.textContent;
+  document.body.removeChild(holder);
   navigator.clipboard.writeText(text).then(() => {
     btn.textContent = '\u2713';
     setTimeout(() => { btn.textContent = '\u2398'; }, 1500);
@@ -206,9 +239,68 @@ function metaItem(key, val) {
   return '<span class="meta-item"><span class="meta-key">' + esc(key) + ':</span> <span class="meta-val">' + esc(String(val)) + '</span></span>';
 }
 
+var JSON_EXPAND_DEPTH = 2;
+
+function toggleJsonNode(rowEl) {
+  var node = rowEl.closest('.j-node');
+  if (node) node.classList.toggle('collapsed');
+}
+
+function jsonPrimitiveHtml(val) {
+  if (val === null) return '<span class="j-null">null</span>';
+  var t = typeof val;
+  if (t === 'string') return '<span class="j-str">"' + esc(val) + '"</span>';
+  if (t === 'number') return '<span class="j-num">' + String(val) + '</span>';
+  if (t === 'boolean') return '<span class="j-bool">' + String(val) + '</span>';
+  return esc(String(val));
+}
+
+// Renders a JSON value as a collapsible tree node. keyHtml is the already
+// rendered '"key": ' prefix (empty for array items and the root).
+function jsonValueHtml(val, depth, keyHtml) {
+  if (val === null || typeof val !== 'object') {
+    return '<div class="j-line">' + keyHtml + jsonPrimitiveHtml(val) + '</div>';
+  }
+  var isArr = Array.isArray(val);
+  var open = isArr ? '[' : '{';
+  var close = isArr ? ']' : '}';
+  var keys = isArr ? null : Object.keys(val);
+  var count = isArr ? val.length : keys.length;
+  if (count === 0) {
+    return '<div class="j-line">' + keyHtml + '<span class="j-brace">' + open + close + '</span></div>';
+  }
+  var label = count + (isArr ? (count === 1 ? ' item' : ' items') : (count === 1 ? ' key' : ' keys'));
+  var html = '<div class="j-node' + (depth < JSON_EXPAND_DEPTH ? '' : ' collapsed') + '">';
+  html += '<div class="j-row" onclick="toggleJsonNode(this)"><span class="j-toggle"></span>' + keyHtml
+    + '<span class="j-brace">' + open + '</span><span class="j-preview"> &#x2026; ' + label + ' ' + close + '</span></div>';
+  html += '<div class="j-children">';
+  for (var i = 0; i < count; i++) {
+    var k = isArr ? i : keys[i];
+    var v = isArr ? val[i] : val[keys[i]];
+    var childKey = isArr ? '' : '<span class="j-key">"' + esc(String(k)) + '"</span>: ';
+    html += jsonValueHtml(v, depth + 1, childKey);
+  }
+  html += '</div>';
+  html += '<div class="j-line j-closeline"><span class="j-brace">' + close + '</span></div>';
+  html += '</div>';
+  return html;
+}
+
+// Renders any value as a collapsible JSON tree; non-object values fall back
+// to the plain pre rendering used before. Carries a hidden .json-copy-src
+// with the full pretty-printed JSON so copy stays complete when collapsed.
+function renderJsonTree(obj) {
+  if (obj == null || typeof obj !== 'object') {
+    return '<pre>' + escJson(obj) + '</pre>';
+  }
+  var copySrc;
+  try { copySrc = JSON.stringify(obj, null, 2); } catch (e) { copySrc = String(obj); }
+  return '<div class="json-tree"><pre class="json-copy-src">' + esc(copySrc) + '</pre>' + jsonValueHtml(obj, 0, '') + '</div>';
+}
+
 function renderHeaders(headers) {
   if (!headers || !Object.keys(headers).length) return '<span style="color:#8b949e">No headers</span>';
-  return '<pre>' + esc(JSON.stringify(headers, null, 2)) + '</pre>';
+  return renderJsonTree(headers);
 }
 
 function msgContent(content) {
@@ -228,9 +320,9 @@ function renderToolCalls(toolCalls) {
   if (!toolCalls || !toolCalls.length) return '';
   return toolCalls.map(function(tc) {
     var func = tc.function || {};
-    var args = '';
-    try { args = JSON.stringify(JSON.parse(func.arguments || '{}'), null, 2); } catch(e) { args = func.arguments || ''; }
-    return '<div class="tool-card"><div class="tool-name">' + esc(func.name || 'unknown') + '</div><pre>' + esc(args) + '</pre></div>';
+    var argsHtml;
+    try { argsHtml = renderJsonTree(JSON.parse(func.arguments || '{}')); } catch(e) { argsHtml = '<pre>' + esc(func.arguments || '') + '</pre>'; }
+    return '<div class="tool-card"><div class="tool-name">' + esc(func.name || 'unknown') + '</div>' + argsHtml + '</div>';
   }).join('');
 }
 
@@ -240,7 +332,7 @@ function renderTools(tools) {
     var func = tool.function || tool;
     var html = '<div class="tool-card"><div class="tool-name">' + esc(func.name || 'unknown') + '</div>';
     if (func.description) html += '<div class="tool-desc">' + esc(func.description) + '</div>';
-    if (func.parameters) html += '<pre>' + esc(JSON.stringify(func.parameters, null, 2)) + '</pre>';
+    if (func.parameters) html += renderJsonTree(func.parameters);
     html += '</div>';
     return html;
   }).join('');
@@ -366,8 +458,8 @@ function renderAGUIDetail(e) {
   if (toolCalls.length) {
     var tcHtml = toolCalls.map(function(tc) {
       var h = '<div class="tool-card"><div class="tool-name">' + esc(tc.name || 'unknown') + '</div>';
-      if (tc.arguments != null) h += '<h4>Arguments</h4><pre>' + escJson(tc.arguments) + '</pre>';
-      if (tc.result != null) h += '<h4>Result</h4><pre>' + escJson(tc.result) + '</pre>';
+      if (tc.arguments != null) h += '<h4>Arguments</h4>' + renderJsonTree(tc.arguments);
+      if (tc.result != null) h += '<h4>Result</h4>' + renderJsonTree(tc.result);
       h += '</div>';
       return h;
     }).join('');
@@ -381,7 +473,7 @@ function renderAGUIDetail(e) {
   }
 
   if (res.state != null) {
-    html += collapsible('&#x1F4E6; State', '<pre>' + escJson(res.state) + '</pre>', false);
+    html += collapsible('&#x1F4E6; State', renderJsonTree(res.state), false);
   }
 
   return html;
@@ -389,8 +481,8 @@ function renderAGUIDetail(e) {
 
 function renderGenericDetail(e) {
   var html = '';
-  html += collapsible('&#x2B06;&#xFE0F; Request Body', '<pre>' + escJson(e.request_body) + '</pre>', false);
-  html += collapsible('&#x2B07;&#xFE0F; Response Body', '<pre>' + escJson(e.response_body) + '</pre>', false);
+  html += collapsible('&#x2B06;&#xFE0F; Request Body', renderJsonTree(e.request_body), false);
+  html += collapsible('&#x2B07;&#xFE0F; Response Body', renderJsonTree(e.response_body), false);
   return html;
 }
 
@@ -400,11 +492,11 @@ function renderDetail(e) {
 
   if (e.ai_insights) {
     html += renderAIDetail(e);
-    html += collapsible('Raw Request', '<pre>' + escJson(e.request_body) + '</pre>', false);
-    html += collapsible('Raw Response', '<pre>' + escJson(e.response_body) + '</pre>', false);
+    html += collapsible('Raw Request', renderJsonTree(e.request_body), false);
+    html += collapsible('Raw Response', renderJsonTree(e.response_body), false);
   } else if (e.response_body && typeof e.response_body === 'object' && e.response_body.object === 'agui.completion') {
     html += renderAGUIDetail(e);
-    html += collapsible('Raw Request', '<pre>' + escJson(e.request_body) + '</pre>', false);
+    html += collapsible('Raw Request', renderJsonTree(e.request_body), false);
   } else {
     html += renderGenericDetail(e);
   }
