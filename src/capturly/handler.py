@@ -185,7 +185,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     def _finalize_sse_chunks(self, accumulator):
         return sse.finalize_sse_chunks(accumulator)
 
-
     def _enqueue_traffic_log_entry(self, entry):
         return storage.enqueue_traffic_log_entry(self, entry)
 

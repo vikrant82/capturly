@@ -24,9 +24,7 @@ def test_dashboard_js_behavior():
         text=True,
         timeout=60,
     )
-    assert result.returncode == 0, (
-        f"Frontend JS tests failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"Frontend JS tests failed:\n{result.stdout}\n{result.stderr}"
 
 
 def test_served_html_matches_asset_file():

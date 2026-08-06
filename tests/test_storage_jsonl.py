@@ -33,9 +33,7 @@ def test_read_skips_malformed_lines(temp_recordings_dir):
     """Malformed lines are skipped, valid lines are returned."""
     log_file = temp_recordings_dir / "traffic_log.jsonl"
     log_file.write_text(
-        '{"method": "GET", "path": "/ok"}\n'
-        "NOT VALID JSON\n"
-        '{"method": "POST", "path": "/also-ok"}\n'
+        '{"method": "GET", "path": "/ok"}\nNOT VALID JSON\n{"method": "POST", "path": "/also-ok"}\n'
     )
 
     entries = storage.read_traffic_log_entries()
