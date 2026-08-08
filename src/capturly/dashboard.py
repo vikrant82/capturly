@@ -1,12 +1,20 @@
-"""Web dashboard server for real-time traffic inspection."""
+"""Web dashboard server for real-time traffic inspection.
+
+Two serving modes:
+  - static entries (tests): full entries held in memory, legacy summaries
+  - file mode: a TrafficIndex over traffic_log.jsonl — slim summaries for
+    list/stats, single-line offset reads for detail
+"""
 
 import json
-import os
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib import resources
+from socketserver import ThreadingMixIn
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
+
+from .traffic_index import TrafficIndex
 
 # Dashboard frontend, served from the packaged HTML asset.
 _INDEX_HTML = resources.files("capturly").joinpath("dashboard.html").read_text(encoding="utf-8")
@@ -14,12 +22,12 @@ _INDEX_HTML = resources.files("capturly").joinpath("dashboard.html").read_text(e
 _TRAFFIC_DETAIL_RE = re.compile(r"^/api/traffic/(\d+)$")
 
 
-def _compute_stats(entries: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compute summary statistics from traffic log entries."""
+def _compute_stats(entries: list) -> dict:
+    """Compute summary statistics from full traffic log entries (static mode)."""
     total_requests = len(entries)
     ai_requests = 0
     total_tokens = 0
-    models: list[str] = []
+    models: list = []
 
     for entry in entries:
         insights = entry.get("ai_insights")
@@ -45,8 +53,8 @@ def _compute_stats(entries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _summary_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
-    """Return a lightweight summary of a traffic entry for list views."""
+def _summary_entry(entry: dict, index: int) -> dict:
+    """Return a lightweight summary of a traffic entry for list views (static mode)."""
     summary = {
         "_index": index,
         "timestamp_ms": entry.get("timestamp_ms"),
@@ -77,23 +85,29 @@ def _summary_entry(entry: dict[str, Any], index: int) -> dict[str, Any]:
     return summary
 
 
+class _DashboardServer(ThreadingMixIn, HTTPServer):
+    """Threaded server so a slow detail parse cannot block list refreshes."""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler for the dashboard API and frontend."""
 
     # Set by create_dashboard_server before serving.
-    entries: Optional[list[dict[str, Any]]] = []
+    entries: Optional[list] = []
     traffic_log_path: Optional[str] = None
+    index: Optional[TrafficIndex] = None
 
     def log_message(self, format, *args):
         """Suppress default request logging."""
         pass
 
-    def _get_entries(self) -> list[dict[str, Any]]:
-        """Return entries from memory or by reading the traffic log file."""
+    def _get_entries(self) -> list:
+        """Return static entries (static mode only)."""
         if self.entries is not None:
             return self.entries
-        if self.traffic_log_path:
-            return _read_traffic_log(self.traffic_log_path)
         return []
 
     def do_GET(self):
@@ -125,6 +139,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Clear all traffic entries from memory and/or the log file."""
         if self.entries is not None:
             self.entries.clear()
+        if self.index is not None:
+            self.index.reset()
         if self.traffic_log_path:
             _truncate_traffic_log(self.traffic_log_path)
         self._send_json({"ok": True, "message": "Traffic log truncated"})
@@ -135,19 +151,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(_INDEX_HTML.encode("utf-8"))
 
-    def _serve_traffic_list(self, params: dict[str, list[str]]):
-        all_entries = self._get_entries()
+    def _serve_traffic_list(self, params: dict):
+        ai_only = params.get("ai", [""])[0].lower() == "true"
 
-        # Build indexed list to preserve original indices through filtering
-        indexed = list(enumerate(all_entries))
+        if self.index is not None:
+            self.index.sync()
+            summaries = self.index.summaries()
+            if ai_only:
+                summaries = [s for s in summaries if "ai" in s]
+        else:
+            indexed = list(enumerate(self._get_entries()))
+            if ai_only:
+                indexed = [(i, e) for i, e in indexed if "ai_insights" in e]
+            summaries = [_summary_entry(e, i) for i, e in indexed]
 
-        # Filter by AI traffic
-        if params.get("ai", [""])[0].lower() == "true":
-            indexed = [(i, e) for i, e in indexed if "ai_insights" in e]
+        total = len(summaries)
 
-        total = len(indexed)
-
-        # Pagination
         try:
             limit = int(params.get("limit", ["50"])[0])
         except ValueError:
@@ -157,12 +176,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except ValueError:
             offset = 0
 
-        page = indexed[offset : offset + limit]
-        summaries = [_summary_entry(e, i) for i, e in page]
-
-        self._send_json({"total": total, "entries": summaries})
+        page = summaries[offset : offset + limit]
+        self._send_json({"total": total, "entries": page})
 
     def _serve_traffic_detail(self, index: int):
+        if self.index is not None:
+            self.index.sync()
+            entry = self.index.load_entry(index)
+            if entry is None:
+                self._send_json({"error": "Entry not found"}, status=404)
+                return
+            self._send_json(entry)
+            return
         entries = self._get_entries()
         if index < 0 or index >= len(entries):
             self._send_json({"error": "Entry not found"}, status=404)
@@ -170,6 +195,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json(entries[index])
 
     def _serve_stats(self):
+        if self.index is not None:
+            self.index.sync()
+            self._send_json(self.index.stats())
+            return
         self._send_json(_compute_stats(self._get_entries()))
 
     def _send_json(self, data: Any, status: int = 200):
@@ -190,30 +219,8 @@ def _truncate_traffic_log(path: str) -> None:
         pass
 
 
-def _read_traffic_log(path: str) -> list[dict[str, Any]]:
-    """Read traffic log entries from a JSONL file. Returns [] on any error."""
-    if not os.path.isfile(path):
-        return []
-    entries: list[dict[str, Any]] = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    if isinstance(obj, dict):
-                        entries.append(obj)
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        return []
-    return entries
-
-
 def create_dashboard_server(
-    entries: Optional[list[dict[str, Any]]] = None,
+    entries: Optional[list] = None,
     host: str = "127.0.0.1",
     port: int = 9090,
     traffic_log_path: Optional[str] = None,
@@ -221,8 +228,9 @@ def create_dashboard_server(
     """Create a dashboard HTTP server.
 
     Provide either a static entries list or a traffic_log_path for live
-    file-based reading. When traffic_log_path is set, the dashboard reads
-    the file on each request, reflecting live updates from the logger.
+    file-based reading. In file mode a TrafficIndex incrementally indexes
+    the log; list/stats are served from slim summaries and detail reads
+    parse a single line at its recorded offset.
 
     Args:
         entries: Static list of traffic log entry dicts (or None for file mode).
@@ -239,6 +247,6 @@ def create_dashboard_server(
 
     _Handler.entries = entries
     _Handler.traffic_log_path = traffic_log_path
+    _Handler.index = TrafficIndex(traffic_log_path) if traffic_log_path else None
 
-    server = HTTPServer((host, port), _Handler)
-    return server
+    return _DashboardServer((host, port), _Handler)

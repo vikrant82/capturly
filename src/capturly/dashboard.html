@@ -113,6 +113,11 @@
   .j-children { padding-left: 18px; }
   .tool-card .json-tree { margin-top: 6px; font-size: 11px; padding: 8px; }
   .loading { text-align: center; padding: 48px; color: #8b949e; font-size: 14px; }
+  details .loading { padding: 8px 0; display: block; text-align: left; }
+  .show-more { background: #21262d; border: 1px solid #30363d; color: #58a6ff; cursor: pointer; font-size: 11px; padding: 2px 10px; border-radius: 4px; margin: 6px 0; display: inline-block; }
+  .show-more:hover { border-color: #58a6ff; }
+  .j-more { cursor: pointer; color: #8b949e; font-style: italic; }
+  .j-more:hover { color: #58a6ff; }
 </style>
 </head>
 <body>
@@ -158,6 +163,46 @@ var allEntries = [];
 var entries = [];
 var selectedIdx = null;
 var filters = { method: null, path: '', status: null, source: null, tags: [] };
+var currentDetail = null;      // full entry while the panel is open
+var sectionRenderers = {};     // section id -> fn(entry) returning body html
+var refreshTimer = null;
+
+var TEXT_LIMIT = 2000;
+var JSON_CHILD_LIMIT = 100;
+var COPY_SRC_LIMIT = 100000;
+var detailTexts = [];   // full strings behind truncated renderings
+var detailValues = [];  // full values behind capped JSON trees
+
+function storeText(t) { detailTexts.push(t); return detailTexts.length - 1; }
+function storeValue(v) { detailValues.push(v); return detailValues.length - 1; }
+
+function renderLongText(text) {
+  if (text == null) return '';
+  var s = String(text);
+  if (s.length <= TEXT_LIMIT) return esc(s);
+  var idx = storeText(s);
+  return '<span class="trunc-wrap"><span class="trunc-text" data-text-idx="' + idx
+    + '" data-shown="' + TEXT_LIMIT + '">' + esc(s.substring(0, TEXT_LIMIT)) + '</span>'
+    + '<button class="show-more" onclick="revealMore(this)">Show more (+'
+    + (s.length - TEXT_LIMIT) + ' chars)</button></span>';
+}
+
+function revealMore(btn) {
+  var wrap = btn.parentElement;
+  var span = wrap ? wrap.querySelector('.trunc-text') : null;
+  if (!span) return;
+  var idx = parseInt(span.getAttribute('data-text-idx'), 10);
+  var shown = parseInt(span.getAttribute('data-shown'), 10) * 2;
+  var full = detailTexts[idx] || '';
+  if (shown >= full.length) {
+    shown = full.length;
+    btn.remove();
+  } else {
+    btn.textContent = 'Show more (+' + (full.length - shown) + ' chars)';
+  }
+  span.setAttribute('data-shown', String(shown));
+  span.innerHTML = esc(full.substring(0, shown));
+}
 
 function esc(s) {
   if (s == null) return '';
@@ -199,7 +244,19 @@ function statusClass(code) {
 }
 
 function copySection(btn) {
-  const body = btn.closest('details').querySelector('.detail-body');
+  const details = btn.closest('details');
+  if (!details) return;
+  if (details.getAttribute('data-rendered') !== 'true') {
+    const sectionId = details.getAttribute('data-section');
+    const renderSection = sectionRenderers[sectionId];
+    const lazyBody = details.querySelector('.detail-body');
+    if (renderSection && currentDetail && lazyBody) {
+      lazyBody.innerHTML = renderSection(currentDetail);
+      details.setAttribute('data-rendered', 'true');
+    }
+  }
+  const body = details.querySelector('.detail-body');
+  if (!body) return;
   // Clone offscreen and substitute each JSON tree with its full raw JSON,
   // so copying is complete regardless of which tree nodes are collapsed.
   var holder = document.createElement('div');
@@ -221,8 +278,10 @@ function copySection(btn) {
     setTimeout(() => { btn.textContent = '⎘'; }, 1500);
   });
 }
-function collapsible(title, bodyHtml, open) {
-  return '<details' + (open ? ' open' : '') + '><summary><span>' + title + '</span><button class="copy-btn" onclick="event.preventDefault();copySection(this)" title="Copy">⎘</button></summary><div class="detail-body">' + bodyHtml + '</div></details>';
+function collapsible(title, sectionId, open) {
+  return '<details data-section="' + sectionId + '" data-rendered="false"' + (open ? ' open' : '')
+    + '><summary><span>' + title + '</span><button class="copy-btn" onclick="event.preventDefault();copySection(this)" title="Copy">&#x2398;</button></summary>'
+    + '<div class="detail-body"><span class="loading">Render on expand…</span></div></details>';
 }
 
 function metaItem(key, val) {
@@ -239,7 +298,10 @@ function toggleJsonNode(rowEl) {
 function jsonPrimitiveHtml(val) {
   if (val === null) return '<span class="j-null">null</span>';
   var t = typeof val;
-  if (t === 'string') return '<span class="j-str">"' + esc(val) + '"</span>';
+  if (t === 'string') {
+    if (val.length > TEXT_LIMIT) return '<span class="j-str">"' + renderLongText(val) + '"</span>';
+    return '<span class="j-str">"' + esc(val) + '"</span>';
+  }
   if (t === 'number') return '<span class="j-num">' + String(val) + '</span>';
   if (t === 'boolean') return '<span class="j-bool">' + String(val) + '</span>';
   return esc(String(val));
@@ -264,11 +326,13 @@ function jsonValueHtml(val, depth, keyHtml) {
   html += '<div class="j-row" onclick="toggleJsonNode(this)"><span class="j-toggle"></span>' + keyHtml
     + '<span class="j-brace">' + open + '</span><span class="j-preview"> &#x2026; ' + label + ' ' + close + '</span></div>';
   html += '<div class="j-children">';
-  for (var i = 0; i < count; i++) {
-    var k = isArr ? i : keys[i];
-    var v = isArr ? val[i] : val[keys[i]];
-    var childKey = isArr ? '' : '<span class="j-key">"' + esc(String(k)) + '"</span>: ';
-    html += jsonValueHtml(v, depth + 1, childKey);
+  var limit = Math.min(count, JSON_CHILD_LIMIT);
+  html += jsonChildrenHtml(val, isArr, keys, 0, limit, depth);
+  if (count > limit) {
+    var vidx = storeValue(val);
+    html += '<div class="j-line j-more" data-val-idx="' + vidx + '" data-offset="' + limit
+      + '" data-depth="' + depth + '" onclick="loadMoreJson(this)">'
+      + '<span class="j-preview">&#x2026; ' + (count - limit) + ' more (load)</span></div>';
   }
   html += '</div>';
   html += '<div class="j-line j-closeline"><span class="j-brace">' + close + '</span></div>';
@@ -276,16 +340,47 @@ function jsonValueHtml(val, depth, keyHtml) {
   return html;
 }
 
-// Renders any value as a collapsible JSON tree; non-object values fall back
-// to the plain pre rendering used before. Carries a hidden .json-copy-src
-// with the full pretty-printed JSON so copy stays complete when collapsed.
+function jsonChildrenHtml(val, isArr, keys, from, to, depth) {
+  var html = '';
+  for (var i = from; i < to; i++) {
+    var k = isArr ? i : keys[i];
+    var v = isArr ? val[i] : val[keys[i]];
+    var childKey = isArr ? '' : '<span class="j-key">"' + esc(String(k)) + '"</span>: ';
+    html += jsonValueHtml(v, depth + 1, childKey);
+  }
+  return html;
+}
+
+function loadMoreJson(rowEl) {
+  var idx = parseInt(rowEl.getAttribute('data-val-idx'), 10);
+  var offset = parseInt(rowEl.getAttribute('data-offset'), 10);
+  var depth = parseInt(rowEl.getAttribute('data-depth'), 10);
+  var val = detailValues[idx];
+  if (val == null) return;
+  var isArr = Array.isArray(val);
+  var keys = isArr ? null : Object.keys(val);
+  var count = isArr ? val.length : keys.length;
+  var to = Math.min(offset + JSON_CHILD_LIMIT, count);
+  rowEl.insertAdjacentHTML('beforebegin', jsonChildrenHtml(val, isArr, keys, offset, to, depth));
+  if (to >= count) {
+    rowEl.remove();
+  } else {
+    rowEl.setAttribute('data-offset', String(to));
+    rowEl.querySelector('.j-preview').innerHTML = '&#x2026; ' + (count - to) + ' more (load)';
+  }
+}
+
 function renderJsonTree(obj) {
   if (obj == null || typeof obj !== 'object') {
     return '<pre>' + escJson(obj) + '</pre>';
   }
   var copySrc;
   try { copySrc = JSON.stringify(obj, null, 2); } catch (e) { copySrc = String(obj); }
-  return '<div class="json-tree"><pre class="json-copy-src">' + esc(copySrc) + '</pre>' + jsonValueHtml(obj, 0, '') + '</div>';
+  // Only small trees carry the hidden full-JSON copy source; for huge bodies
+  // copy falls back to whatever is currently rendered.
+  var copyHtml = copySrc.length <= COPY_SRC_LIMIT
+    ? '<pre class="json-copy-src">' + esc(copySrc) + '</pre>' : '';
+  return '<div class="json-tree">' + copyHtml + jsonValueHtml(obj, 0, '') + '</div>';
 }
 
 function renderHeaders(headers) {
@@ -293,17 +388,21 @@ function renderHeaders(headers) {
   return renderJsonTree(headers);
 }
 
-function msgContent(content) {
+function msgPlainText(content) {
   if (content == null) return '';
-  if (typeof content === 'string') return esc(content);
+  if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content.map(function(part) {
-      if (part.type === 'text') return esc(part.text || '');
-      if (part.type === 'image_url') return '[Image: ' + esc(String((part.image_url && part.image_url.url) || '').substring(0, 80)) + ']';
-      return esc(JSON.stringify(part));
+      if (part.type === 'text') return part.text || '';
+      if (part.type === 'image_url') return '[Image: ' + String((part.image_url && part.image_url.url) || '').substring(0, 80) + ']';
+      return JSON.stringify(part);
     }).join('\n');
   }
-  return esc(JSON.stringify(content, null, 2));
+  return JSON.stringify(content, null, 2);
+}
+
+function msgContent(content) {
+  return renderLongText(msgPlainText(content));
 }
 
 function renderToolCalls(toolCalls) {
@@ -353,15 +452,13 @@ function renderOverview(e) {
   return '<div class="detail-section"><h3>Overview</h3><pre>' + esc(lines) + '</pre></div>';
 }
 
-function renderAIDetail(e) {
+function renderAIMeta(e) {
   var ai = e.ai_insights || {};
   var aiReq = ai.request || {};
   var aiRes = ai.response || {};
   var req = (e.request_body && typeof e.request_body === 'object') ? e.request_body : {};
   var res = (e.response_body && typeof e.response_body === 'object') ? e.response_body : {};
-  var html = '';
-
-  html += '<div class="ai-meta">';
+  var html = '<div class="ai-meta">';
   html += metaItem('Model', aiReq.model || req.model || '-');
   if (aiRes.usage) {
     var u = aiRes.usage;
@@ -373,49 +470,94 @@ function renderAIDetail(e) {
   html += metaItem('Stream', req.stream ? 'Yes' : 'No');
   if (aiReq.message_count) html += metaItem('Messages', aiReq.message_count);
   html += '</div>';
+  return html;
+}
 
+function renderChoices(choices) {
+  var respHtml = '';
+  choices.forEach(function(choice) {
+    var msg = choice.message || {};
+    if (msg.content) {
+      respHtml += '<div class="msg assistant"><div class="msg-role">assistant</div><div class="msg-content">' + msgContent(msg.content) + '</div>';
+      if (msg.tool_calls && msg.tool_calls.length) respHtml += renderToolCalls(msg.tool_calls);
+      respHtml += '</div>';
+    } else if (msg.tool_calls && msg.tool_calls.length) {
+      respHtml += '<div class="msg assistant"><div class="msg-role">assistant (tool calls)</div>' + renderToolCalls(msg.tool_calls) + '</div>';
+    }
+  });
+  return respHtml;
+}
+
+function registerAISections(e) {
+  var aiReq = (e.ai_insights && e.ai_insights.request) || {};
+  var req = (e.request_body && typeof e.request_body === 'object') ? e.request_body : {};
+  var res = (e.response_body && typeof e.response_body === 'object') ? e.response_body : {};
   var sysPrompts = aiReq.system_prompts || [];
   if (sysPrompts.length) {
-    html += collapsible('&#x1F4DC; System Prompt', '<pre>' + esc(sysPrompts.join('\n---\n')) + '</pre>', false);
+    sectionRenderers['system-prompt'] = function() {
+      return '<pre>' + renderLongText(sysPrompts.join('\n---\n')) + '</pre>';
+    };
   }
-
   var tools = req.tools || [];
   if (tools.length) {
-    html += collapsible('&#x1F527; Tools (' + tools.length + ')', renderTools(tools), false);
+    sectionRenderers['tools'] = function() { return renderTools(tools); };
   }
-
   var messages = (req.messages || []).filter(function(m) { return m.role !== 'system'; });
   if (messages.length) {
-    var msgsHtml = messages.map(renderMessage).join('');
-    html += collapsible('&#x1F4AC; Messages (' + messages.length + ')', msgsHtml, false);
+    sectionRenderers['messages'] = function() { return messages.map(renderMessage).join(''); };
   }
-
   var choices = res.choices || [];
   if (choices.length) {
-    var respHtml = '';
-    choices.forEach(function(choice) {
-      var msg = choice.message || {};
-      if (msg.content) {
-        respHtml += '<div class="msg assistant"><div class="msg-role">assistant</div><div class="msg-content">' + msgContent(msg.content) + '</div>';
-        if (msg.tool_calls && msg.tool_calls.length) respHtml += renderToolCalls(msg.tool_calls);
-        respHtml += '</div>';
-      } else if (msg.tool_calls && msg.tool_calls.length) {
-        respHtml += '<div class="msg assistant"><div class="msg-role">assistant (tool calls)</div>' + renderToolCalls(msg.tool_calls) + '</div>';
-      }
-    });
-    if (respHtml) {
-      html += collapsible('&#x1F916; Assistant Response', respHtml, false);
-    }
+    sectionRenderers['assistant-response'] = function() { return renderChoices(choices); };
   }
-
   if (e.sse && e.sse_combine_status) {
-    var sseInfo = 'Combine status: ' + e.sse_combine_status;
-    if (e.sse_duration_ms != null) sseInfo += '\nDuration: ' + e.sse_duration_ms + 'ms';
-    if (e.sse_error) sseInfo += '\nError: ' + e.sse_error;
-    html += collapsible('&#x1F4E1; SSE Info', '<pre>' + esc(sseInfo) + '</pre>', false);
+    sectionRenderers['sse-info'] = function() {
+      var sseInfo = 'Combine status: ' + e.sse_combine_status;
+      if (e.sse_duration_ms != null) sseInfo += '\nDuration: ' + e.sse_duration_ms + 'ms';
+      if (e.sse_error) sseInfo += '\nError: ' + e.sse_error;
+      return '<pre>' + esc(sseInfo) + '</pre>';
+    };
   }
+  sectionRenderers['raw-request'] = function() { return renderJsonTree(e.request_body); };
+  sectionRenderers['raw-response'] = function() { return renderJsonTree(e.response_body); };
+  return { sysPrompts: sysPrompts, tools: tools, messages: messages, choices: choices };
+}
 
-  return html;
+function registerAGUISections(e) {
+  var res = (e.response_body && typeof e.response_body === 'object') ? e.response_body : {};
+  var run = res.run || {};
+  var messages = res.messages || [];
+  if (messages.length) {
+    sectionRenderers['agui-messages'] = function() {
+      return messages.map(function(msg) {
+        var role = msg.role || 'assistant';
+        return '<div class="msg ' + esc(role) + '"><div class="msg-role">' + esc(role) + '</div><div class="msg-content">' + esc(msg.content || '') + '</div></div>';
+      }).join('');
+    };
+  }
+  var toolCalls = res.tool_calls || [];
+  if (toolCalls.length) {
+    sectionRenderers['agui-tool-calls'] = function() {
+      return toolCalls.map(function(tc) {
+        var h = '<div class="tool-card"><div class="tool-name">' + esc(tc.name || 'unknown') + '</div>';
+        if (tc.arguments != null) h += '<h4>Arguments</h4>' + renderJsonTree(tc.arguments);
+        if (tc.result != null) h += '<h4>Result</h4>' + renderJsonTree(tc.result);
+        h += '</div>';
+        return h;
+      }).join('');
+    };
+  }
+  var reasoning = res.reasoning || [];
+  if (reasoning.length) {
+    sectionRenderers['agui-reasoning'] = function() {
+      return reasoning.map(function(r) { return '<pre>' + esc(r.content || '') + '</pre>'; }).join('');
+    };
+  }
+  if (res.state != null) {
+    sectionRenderers['agui-state'] = function() { return renderJsonTree(res.state); };
+  }
+  sectionRenderers['raw-request'] = function() { return renderJsonTree(e.request_body); };
+  return { run: run, messages: messages, toolCalls: toolCalls, reasoning: reasoning };
 }
 
 function renderAGUIDetail(e) {
@@ -477,22 +619,50 @@ function renderGenericDetail(e) {
 }
 
 function renderDetail(e) {
+  sectionRenderers = {};
   var html = '<h2>' + esc(e.method) + ' ' + esc(e.path) + '</h2>';
   html += renderOverview(e);
 
   if (e.ai_insights) {
-    html += renderAIDetail(e);
-    html += collapsible('Raw Request', renderJsonTree(e.request_body), false);
-    html += collapsible('Raw Response', renderJsonTree(e.response_body), false);
+    html += renderAIMeta(e);
+    var parts = registerAISections(e);
+    if (parts.sysPrompts.length) html += collapsible('&#x1F4DC; System Prompt', 'system-prompt');
+    if (parts.tools.length) html += collapsible('&#x1F527; Tools (' + parts.tools.length + ')', 'tools');
+    if (parts.messages.length) html += collapsible('&#x1F4AC; Messages (' + parts.messages.length + ')', 'messages');
+    if (parts.choices.length) html += collapsible('&#x1F916; Assistant Response', 'assistant-response');
+    if (e.sse && e.sse_combine_status) html += collapsible('&#x1F4E1; SSE Info', 'sse-info');
+    html += collapsible('Raw Request', 'raw-request');
+    html += collapsible('Raw Response', 'raw-response');
   } else if (e.response_body && typeof e.response_body === 'object' && e.response_body.object === 'agui.completion') {
-    html += renderAGUIDetail(e);
-    html += collapsible('Raw Request', renderJsonTree(e.request_body), false);
+    var res = e.response_body;
+    var run = res.run || {};
+    html += '<div class="ai-meta">';
+    html += metaItem('Protocol', 'AGUI');
+    if (run.run_id) html += metaItem('Run ID', run.run_id);
+    if (run.thread_id) html += metaItem('Thread ID', run.thread_id);
+    html += metaItem('Status', run.status || '-');
+    html += metaItem('Events', res.event_count || 0);
+    html += '</div>';
+    if (run.error) {
+      html += '<div class="detail-section"><pre style="color:#f85149">' + esc(run.error) + '</pre></div>';
+    }
+    var aguiParts = registerAGUISections(e);
+    if (aguiParts.messages.length) html += collapsible('&#x1F4AC; Messages (' + aguiParts.messages.length + ')', 'agui-messages');
+    if (aguiParts.toolCalls.length) html += collapsible('&#x1F557;&#xFE0F; Tool Calls (' + aguiParts.toolCalls.length + ')', 'agui-tool-calls');
+    if (aguiParts.reasoning.length) html += collapsible('&#x1F9E0; Reasoning', 'agui-reasoning');
+    if (res.state != null) html += collapsible('&#x1F4E6; State', 'agui-state');
+    html += collapsible('Raw Request', 'raw-request');
   } else {
-    html += renderGenericDetail(e);
+    sectionRenderers['raw-request'] = function() { return renderJsonTree(e.request_body); };
+    sectionRenderers['raw-response'] = function() { return renderJsonTree(e.response_body); };
+    html += collapsible('&#x2B06;&#xFE0F; Request Body', 'raw-request');
+    html += collapsible('&#x2B07;&#xFE0F; Response Body', 'raw-response');
   }
 
-  html += collapsible('Request Headers', renderHeaders(e.request_headers), false);
-  html += collapsible('Response Headers', renderHeaders(e.response_headers), false);
+  sectionRenderers['req-headers'] = function() { return renderHeaders(e.request_headers); };
+  html += collapsible('Request Headers', 'req-headers');
+  sectionRenderers['res-headers'] = function() { return renderHeaders(e.response_headers); };
+  html += collapsible('Response Headers', 'res-headers');
 
   return html;
 }
@@ -514,7 +684,7 @@ function renderTable() {
   }
   tbody.innerHTML = entries.map(function(e, i) {
     var tags = [];
-    if (e.ai_insights) tags.push('<span class="badge ai">AI</span>');
+    if (e.ai || e.ai_insights) tags.push('<span class="badge ai">AI</span>');
     if (e.agui) tags.push('<span class="badge agui">AGUI</span>');
     if (e.tools) tags.push('<span class="badge tools">Tools</span>');
     if (e.sse) tags.push('<span class="badge sse">SSE</span>');
@@ -544,7 +714,7 @@ function matchesFilters(e) {
     var hasTag = false;
     for (var t = 0; t < filters.tags.length; t++) {
       var tag = filters.tags[t];
-      if (tag === 'ai' && e.ai_insights) hasTag = true;
+      if (tag === 'ai' && (e.ai || e.ai_insights)) hasTag = true;
       else if (tag === 'agui' && e.agui) hasTag = true;
       else if (tag === 'sse' && e.sse) hasTag = true;
       else if (tag === 'tools' && e.tools) hasTag = true;
@@ -611,10 +781,14 @@ function showDetail(idx) {
   content.innerHTML = '<div class="loading">Loading detail...</div>';
   panel.className = 'detail-panel open';
   overlay.className = 'overlay open';
+  stopPolling();
   fetch('/api/traffic/' + summary._index)
     .then(function(res) { return res.json(); })
     .then(function(e) {
       if (e.error) { content.innerHTML = '<div class="loading">Error: ' + esc(e.error) + '</div>'; return; }
+      currentDetail = e;
+      detailTexts = [];
+      detailValues = [];
       content.innerHTML = renderDetail(e);
     })
     .catch(function() {
@@ -632,11 +806,27 @@ function truncate() {
 function closeDetail() {
   document.getElementById('detail-panel').className = 'detail-panel';
   document.getElementById('overlay').className = 'overlay';
+  currentDetail = null;
+  startPolling();
 }
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeDetail();
 });
+
+(function() {
+  var panel = document.getElementById('detail-panel');
+  if (!panel || !panel.addEventListener) return;
+  panel.addEventListener('toggle', function(ev) {
+    var d = ev.target;
+    if (!d || d.tagName !== 'DETAILS' || d.getAttribute('data-rendered') === 'true') return;
+    var fn = sectionRenderers[d.getAttribute('data-section')];
+    if (!fn || !currentDetail) return;
+    var body = d.querySelector('.detail-body');
+    if (body) body.innerHTML = fn(currentDetail);
+    d.setAttribute('data-rendered', 'true');
+  }, true);
+})();
 
 function populateSourceFilter() {
   var select = document.getElementById('filter-source');
@@ -676,8 +866,16 @@ function refresh() {
   });
 }
 
+function startPolling() {
+  if (refreshTimer == null) refreshTimer = setInterval(refresh, 3000);
+}
+
+function stopPolling() {
+  if (refreshTimer != null) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+
 refresh();
-setInterval(refresh, 3000);
+startPolling();
 </script>
 </body>
 </html>

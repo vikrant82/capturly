@@ -53,7 +53,7 @@ const tree = vm.runInContext(`renderJsonTree({
 })`, sandbox);
 
 assert(tree.startsWith('<div class="json-tree">'), 'tree root rendered');
-assert(tree.includes('json-copy-src'), 'hidden copy source present');
+assert(tree.includes('json-copy-src'), 'small trees keep hidden copy source');
 assert(tree.includes('j-node collapsed'), 'nodes at depth >= 2 are collapsed');
 assert(tree.includes('&#x2026;'), 'collapsed preview ellipsis present');
 assert(tree.includes('3 keys'), 'key count label present');
@@ -82,6 +82,77 @@ assert(collapsedCount === 1, 'depth 2 node collapsed (got ' + collapsedCount + '
 
 // --- esc: HTML escaping helper ---
 assert(vm.runInContext(`esc('<a href="x">&</a>')`, sandbox) === '&lt;a href="x"&gt;&amp;&lt;/a&gt;', 'esc escapes HTML metacharacters');
+
+// --- renderDetail: lazy sections ---
+const lazyEntry = {
+  method: 'POST', path: '/v1/chat/completions', status_code: 200,
+  timestamp_ms: 1000, duration_ms: 5,
+  request_body_size: 10, response_body_size: 20,
+  ai_insights: {
+    request: { model: 'gpt-4o', message_count: 2, system_prompts: ['You are helpful.'] },
+    response: { usage: { total_tokens: 15 } },
+  },
+  request_body: { model: 'gpt-4o', messages: [
+    { role: 'system', content: 'You are helpful.' },
+    { role: 'user', content: 'UNIQUE_USER_MESSAGE_MARKER' },
+  ] },
+  response_body: { choices: [{ message: { role: 'assistant', content: 'hi' } }] },
+  request_headers: { 'content-type': 'application/json' },
+  response_headers: { 'content-type': 'application/json' },
+};
+const detailHtml = vm.runInContext(
+  'renderDetail(' + JSON.stringify(lazyEntry) + ')', sandbox);
+assert(detailHtml.includes('data-rendered="false"'), 'sections start unrendered');
+assert(detailHtml.includes('data-section="messages"'), 'messages section present');
+assert(detailHtml.includes('data-section="system-prompt"'), 'system prompt section present');
+assert(detailHtml.includes('data-section="raw-request"'), 'raw request section present');
+assert(!detailHtml.includes('UNIQUE_USER_MESSAGE_MARKER'),
+  'message bodies are NOT rendered until expanded');
+
+// --- slim list shape: badges/filters use e.ai ---
+assert(vm.runInContext(`(function() {
+  var e = { ai: { model: 'gpt-4o' }, method: 'POST', path: '/x', status_code: 200 };
+  return matchesFilters === undefined ? false : true;
+})()`, sandbox), 'matchesFilters exists');
+vm.runInContext(`filters = { method: null, path: '', status: null, source: null, tags: ['ai'] };`, sandbox);
+assert(vm.runInContext(
+  `matchesFilters({ ai: { model: 'x' }, method: 'POST', path: '/a', status_code: 200 })`,
+  sandbox) === true, 'ai tag matches entries with slim ai object');
+assert(vm.runInContext(
+  `matchesFilters({ method: 'POST', path: '/a', status_code: 200 })`,
+  sandbox) === false, 'ai tag does not match entries without ai');
+vm.runInContext(`filters = { method: null, path: '', status: null, source: null, tags: [] };`, sandbox);
+
+// --- text truncation ---
+const longText = 'x'.repeat(5000);
+vm.runInContext('detailTexts = []; currentDetail = {};', sandbox);
+const trunc = vm.runInContext(
+  'renderLongText(' + JSON.stringify(longText) + ')', sandbox);
+assert(trunc.includes('x'.repeat(2000)), 'first 2000 chars rendered');
+assert(!trunc.includes('x'.repeat(2001)), 'content beyond limit not rendered');
+assert(trunc.includes('Show more (+3000 chars)'), 'show-more button reports remaining chars');
+const shortText = vm.runInContext(`renderLongText('short')`, sandbox);
+assert(shortText === 'short', 'short text renders untouched');
+
+// --- json tree child cap ---
+vm.runInContext('detailValues = [];', sandbox);
+const bigArr = vm.runInContext(
+  'renderJsonTree({ arr: Array.from({length: 250}, function(_, i) { return i; }) })', sandbox);
+assert(bigArr.includes('150 more (load)'), 'children beyond 100 are capped with load row');
+assert(bigArr.includes('data-val-idx'), 'load row references stored value');
+
+// --- copy source cap ---
+const hugeObj = 'renderJsonTree({ big: ' + JSON.stringify('y'.repeat(150000)) + ' })';
+const hugeTree = vm.runInContext(hugeObj, sandbox);
+assert(!hugeTree.includes('json-copy-src'), 'huge trees skip the hidden copy source');
+const smallTree = vm.runInContext(`renderJsonTree({ a: 1 })`, sandbox);
+assert(smallTree.includes('json-copy-src'), 'small trees keep the hidden copy source');
+
+// --- msgContent truncation ---
+const msgHtml = vm.runInContext(
+  'msgContent(' + JSON.stringify('z'.repeat(4000)) + ')', sandbox);
+assert(msgHtml.includes('Show more'), 'message content is truncated');
+assert(!msgHtml.includes('z'.repeat(2001)), 'message content capped at limit');
 
 if (failures > 0) {
   console.error(failures + ' assertion(s) failed');
