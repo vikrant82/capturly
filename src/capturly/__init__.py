@@ -1,3 +1,3 @@
 """Capturly: record, replay, and debug HTTP API traffic."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

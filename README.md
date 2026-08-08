@@ -73,13 +73,7 @@ capturly --mode hybrid --backend https://api.example.com
 
 ## Dashboard
 
-The built-in web dashboard (default: `http://localhost:9090`) provides:
-
-- **Traffic list** with newest-first pagination, method/path/status filters, and tag chips (AI, AGUI, SSE, Tools, Tool Results)
-- **AI detail view** — system prompts, tool definitions, message history, assistant response, token usage
-- **AGUI detail view** — run metadata, reconstructed messages, tool calls with parsed arguments, reasoning, state snapshots
-- **Generic detail view** — collapsible request/response bodies and headers
-- **Truncate** — clear the traffic log with one click
+The built-in web dashboard (default: `http://localhost:9090`) shows a newest-first traffic list with filters and tag chips (AI, AGUI, SSE, Tools, Tool Results), plus per-request detail views that surface system prompts, new inputs vs. conversation history, tool calls, token usage, and AGUI agent runs. See the [Dashboard Guide](docs/dashboard.md).
 
 ## Modes
 
@@ -115,6 +109,7 @@ pip install capturly
 
 - [Getting Started](docs/getting-started.md) — 5-minute tutorial
 - [Mode Reference](docs/modes.md) — Detailed behavior of each mode
+- [Dashboard Guide](docs/dashboard.md) — Traffic list, filters, detail views, API
 - [Configuration](docs/configuration.md) — All options, all sources
 
 ## Contributing

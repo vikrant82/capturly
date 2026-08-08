@@ -44,23 +44,7 @@ The recordings directory can be set via environment variable. CLI `--recordings-
 
 ## Dashboard
 
-The web dashboard is available at `http://localhost:9090` (configurable via `--dashboard-port`).
-
-**API endpoints:**
-- `GET /api/traffic?limit=N&offset=N&ai=true` — paginated traffic list
-- `GET /api/traffic/{index}` — full entry detail
-- `GET /api/stats` — summary statistics
-- `POST /api/truncate` — clear all traffic entries
-
-## Dashboard
-
-The web dashboard is available at `http://localhost:9090` (configurable via `--dashboard-port`).
-
-**API endpoints:**
-- `GET /api/traffic?limit=N&offset=N&ai=true` — paginated traffic list
-- `GET /api/traffic/{index}` — full entry detail
-- `GET /api/stats` — summary statistics
-- `POST /api/truncate` — clear all traffic entries
+The web dashboard is available at `http://localhost:9090` (configurable via `--dashboard-port`). See the [Dashboard Guide](dashboard.md) for features and API endpoints.
 
 ## Recordings Directory
 
@@ -71,7 +55,7 @@ The web dashboard is available at `http://localhost:9090` (configurable via `--d
 capturly-recordings/
 ├── <cache-key>.json       # Response cache files
 ├── <cache-key>.sse        # SSE stream markers
-├── traffic_log.json       # Full request/response log (log mode)
+├── traffic_log.jsonl      # Full request/response log, one entry per line (log mode)
 └── sse-events/            # Individual SSE event streams
     └── <timestamp>-<cache-key>.jsonl
 ```
