@@ -15,7 +15,8 @@ def test_full_record_replay_workflow():
 
         # Start a simple backend
         backend_script = Path(tmpdir) / "backend.py"
-        backend_script.write_text("""
+        backend_script.write_text(
+            """
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 
@@ -30,7 +31,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 HTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
-""")
+"""
+        )
 
         backend_proc = subprocess.Popen(
             [sys.executable, str(backend_script)],

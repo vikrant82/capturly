@@ -108,9 +108,7 @@ def build_combined_sse_log_entry(
     combine_status = (
         "aborted"
         if stream_outcome["aborted"]
-        else "no_valid_chunks"
-        if not has_combined_completion
-        else "completed"
+        else "no_valid_chunks" if not has_combined_completion else "completed"
     )
     if response_body is None:
         response_body = {
