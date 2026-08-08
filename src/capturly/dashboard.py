@@ -22,6 +22,19 @@ _INDEX_HTML = resources.files("capturly").joinpath("dashboard.html").read_text(e
 _TRAFFIC_DETAIL_RE = re.compile(r"^/api/traffic/(\d+)$")
 
 
+def _newest_page_window(total: int, page: int, limit: int) -> tuple:
+    """Return (start, end) slice bounds for a page counted from the newest entries.
+
+    Page 0 is the window anchored at the newest entry; higher pages walk
+    toward older entries. Out-of-range pages collapse to an empty window
+    instead of wrapping or erroring. Summaries are held in log (oldest-first)
+    order, so the slice is applied directly to that list.
+    """
+    end = max(0, total - page * limit)
+    start = max(0, end - limit)
+    return start, end
+
+
 def _compute_stats(entries: list) -> dict:
     """Compute summary statistics from full traffic log entries (static mode)."""
     total_requests = len(entries)
@@ -80,6 +93,9 @@ def _summary_entry(entry: dict, index: int) -> dict:
         ai_resp = ai.get("response")
         if isinstance(ai_resp, dict) and ai_resp.get("tool_call_names"):
             summary["tools"] = True
+        roles = (ai.get("request") or {}).get("roles")
+        if isinstance(roles, list) and any(role in ("tool", "function") for role in roles):
+            summary["tool_results"] = True
     elif isinstance(resp, dict) and resp.get("tool_calls"):
         summary["tools"] = True
     return summary
@@ -152,6 +168,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(_INDEX_HTML.encode("utf-8"))
 
     def _serve_traffic_list(self, params: dict):
+        """Serve a summary window: `page` counts from the newest, `offset` from the oldest."""
         ai_only = params.get("ai", [""])[0].lower() == "true"
 
         if self.index is not None:
@@ -171,13 +188,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             limit = int(params.get("limit", ["50"])[0])
         except ValueError:
             limit = 50
-        try:
-            offset = int(params.get("offset", ["0"])[0])
-        except ValueError:
-            offset = 0
 
-        page = summaries[offset : offset + limit]
-        self._send_json({"total": total, "entries": page})
+        if "page" in params:
+            try:
+                page = max(0, int(params["page"][0]))
+            except ValueError:
+                page = 0
+            start, end = _newest_page_window(total, page, limit)
+            page_entries = summaries[start:end]
+        else:
+            try:
+                offset = int(params.get("offset", ["0"])[0])
+            except ValueError:
+                offset = 0
+            page_entries = summaries[offset : offset + limit]
+
+        self._send_json({"total": total, "entries": page_entries})
 
     def _serve_traffic_detail(self, index: int):
         if self.index is not None:

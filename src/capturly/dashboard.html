@@ -28,8 +28,13 @@
   .filter-chip.active-agui { background: #bc8cff33; color: #bc8cff; border-color: #bc8cff; }
   .filter-chip.active-sse { background: #3fb95033; color: #3fb950; border-color: #3fb950; }
   .filter-chip.active-tools { background: #d2992233; color: #d29922; border-color: #d29922; }
+  .filter-chip.active-tool_results { background: #db61a233; color: #db61a2; border-color: #db61a2; }
   .filter-clear { background: none; border: none; color: #f85149; cursor: pointer; font-size: 12px; padding: 4px 8px; display: none; }
   .filter-clear:hover { text-decoration: underline; }
+  .pagination { padding: 0 24px 10px; display: flex; gap: 12px; align-items: center; font-size: 12px; color: #8b949e; }
+  .pagination button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .pagination button:hover:not(:disabled) { border-color: #58a6ff; }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
   .traffic-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .traffic-table th { text-align: left; padding: 8px 12px; background: #161b22; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; position: sticky; top: 0; }
   .traffic-table td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
@@ -51,6 +56,7 @@
   .badge.sse { background: #3fb95033; color: #3fb950; border: 1px solid #3fb950; }
   .badge.agui { background: #bc8cff33; color: #bc8cff; border: 1px solid #bc8cff; }
   .badge.tools { background: #d2992233; color: #d29922; border: 1px solid #d29922; }
+  .badge.tool_results { background: #db61a233; color: #db61a2; border: 1px solid #db61a2; }
   .badge.source { background: #39c5cf33; color: #39c5cf; border: 1px solid #39c5cf; }
   .empty { text-align: center; padding: 48px; color: #8b949e; }
   .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 99; }
@@ -147,7 +153,13 @@
   <span class="filter-chip" data-tag="agui" onclick="toggleTag(this)">AGUI</span>
   <span class="filter-chip" data-tag="sse" onclick="toggleTag(this)">SSE</span>
   <span class="filter-chip" data-tag="tools" onclick="toggleTag(this)">Tools</span>
+  <span class="filter-chip" data-tag="tool_results" onclick="toggleTag(this)">Tool Results</span>
   <button class="filter-clear" id="filter-clear" onclick="clearFilters()">&#x2715; Clear</button>
+</div>
+<div class="pagination">
+  <button id="page-newer" onclick="pageNewer()" disabled>&lsaquo; Newer</button>
+  <span id="page-info"></span>
+  <button id="page-older" onclick="pageOlder()" disabled>Older &rsaquo;</button>
 </div>
 <table class="traffic-table">
   <thead><tr><th>#</th><th>Time</th><th>Source</th><th>Method</th><th>Path</th><th>Status</th><th>Duration</th><th>Req Size</th><th>Res Size</th><th>Tags</th></tr></thead>
@@ -166,6 +178,9 @@ var filters = { method: null, path: '', status: null, source: null, tags: [] };
 var currentDetail = null;      // full entry while the panel is open
 var sectionRenderers = {};     // section id -> fn(entry) returning body html
 var refreshTimer = null;
+
+var PAGE_LIMIT = 200;
+var currentPage = 0;           // 0 = window anchored at the newest entries
 
 var TEXT_LIMIT = 2000;
 var JSON_CHILD_LIMIT = 100;
@@ -503,8 +518,23 @@ function registerAISections(e) {
     sectionRenderers['tools'] = function() { return renderTools(tools); };
   }
   var messages = (req.messages || []).filter(function(m) { return m.role !== 'system'; });
-  if (messages.length) {
-    sectionRenderers['messages'] = function() { return messages.map(renderMessage).join(''); };
+  // Turn-aware split: new inputs are the messages added after the last
+  // assistant turn (a user message, or one-or-more tool results); history
+  // runs up to and including that assistant message. With no assistant
+  // message yet, everything is new input. Requests ending in an assistant
+  // message (prefill/regenerate) treat the final message alone as new.
+  var lastAssistant = -1;
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === 'assistant') { lastAssistant = i; break; }
+  }
+  var newInputs = lastAssistant >= 0 ? messages.slice(lastAssistant + 1) : messages.slice();
+  if (!newInputs.length && messages.length) newInputs = messages.slice(messages.length - 1);
+  var history = messages.slice(0, messages.length - newInputs.length);
+  if (newInputs.length) {
+    sectionRenderers['new-inputs'] = function() { return newInputs.map(renderMessage).join(''); };
+  }
+  if (history.length) {
+    sectionRenderers['messages-history'] = function() { return history.map(renderMessage).join(''); };
   }
   var choices = res.choices || [];
   if (choices.length) {
@@ -520,7 +550,13 @@ function registerAISections(e) {
   }
   sectionRenderers['raw-request'] = function() { return renderJsonTree(e.request_body); };
   sectionRenderers['raw-response'] = function() { return renderJsonTree(e.response_body); };
-  return { sysPrompts: sysPrompts, tools: tools, messages: messages, choices: choices };
+  return {
+    sysPrompts: sysPrompts,
+    tools: tools,
+    newInputs: newInputs,
+    history: history,
+    choices: choices,
+  };
 }
 
 function registerAGUISections(e) {
@@ -628,7 +664,18 @@ function renderDetail(e) {
     var parts = registerAISections(e);
     if (parts.sysPrompts.length) html += collapsible('&#x1F4DC; System Prompt', 'system-prompt');
     if (parts.tools.length) html += collapsible('&#x1F527; Tools (' + parts.tools.length + ')', 'tools');
-    if (parts.messages.length) html += collapsible('&#x1F4AC; Messages (' + parts.messages.length + ')', 'messages');
+    if (parts.newInputs.length) {
+      var inputRoles = [];
+      for (var n = 0; n < parts.newInputs.length; n++) {
+        var newInputRole = parts.newInputs[n].role || 'unknown';
+        if (inputRoles.indexOf(newInputRole) === -1) inputRoles.push(newInputRole);
+      }
+      html += collapsible('&#x1F4AC; New Inputs (' + parts.newInputs.length + ' &middot; '
+        + esc(inputRoles.join(', ')) + ')', 'new-inputs');
+    }
+    if (parts.history.length) {
+      html += collapsible('&#x1F4DA; Messages History (' + parts.history.length + ')', 'messages-history');
+    }
     if (parts.choices.length) html += collapsible('&#x1F916; Assistant Response', 'assistant-response');
     if (e.sse && e.sse_combine_status) html += collapsible('&#x1F4E1; SSE Info', 'sse-info');
     html += collapsible('Raw Request', 'raw-request');
@@ -687,9 +734,10 @@ function renderTable() {
     if (e.ai || e.ai_insights) tags.push('<span class="badge ai">AI</span>');
     if (e.agui) tags.push('<span class="badge agui">AGUI</span>');
     if (e.tools) tags.push('<span class="badge tools">Tools</span>');
+    if (e.tool_results) tags.push('<span class="badge tool_results">Tool Results</span>');
     if (e.sse) tags.push('<span class="badge sse">SSE</span>');
     return '<tr class="clickable' + (e._index === selectedIdx ? ' selected' : '') + '" onclick="showDetail(' + i + ')">'
-      + '<td>' + i + '</td><td>' + fmtTime(e.timestamp_ms) + '</td>'
+      + '<td>' + e._index + '</td><td>' + fmtTime(e.timestamp_ms) + '</td>'
       + '<td><span class="badge source">' + esc(sourceLabel(e)) + '</span></td>'
       + '<td><span class="method ' + e.method + '">' + e.method + '</span></td>'
       + '<td>' + esc(e.path) + '</td>'
@@ -718,6 +766,7 @@ function matchesFilters(e) {
       else if (tag === 'agui' && e.agui) hasTag = true;
       else if (tag === 'sse' && e.sse) hasTag = true;
       else if (tag === 'tools' && e.tools) hasTag = true;
+      else if (tag === 'tool_results' && e.tool_results) hasTag = true;
     }
     if (!hasTag) return false;
   }
@@ -846,20 +895,58 @@ function populateSourceFilter() {
   filters.source = select.value || null;
 }
 
+function pageWindow(total, page, limit) {
+  // Slice bounds (oldest-first log order) for a page counted from the newest.
+  var end = Math.max(0, total - page * limit);
+  var start = Math.max(0, end - limit);
+  return { start: start, end: end };
+}
+
+function renderPagination(total) {
+  var info = document.getElementById('page-info');
+  var newer = document.getElementById('page-newer');
+  var older = document.getElementById('page-older');
+  if (!total) {
+    info.textContent = '';
+    newer.disabled = true;
+    older.disabled = true;
+    return;
+  }
+  var win = pageWindow(total, currentPage, PAGE_LIMIT);
+  info.textContent = 'Showing ' + (win.start + 1) + '\u2013' + win.end + ' of ' + total + ' (newest first)';
+  newer.disabled = currentPage === 0;
+  older.disabled = win.start <= 0;
+}
+
+function pageNewer() {
+  if (currentPage > 0) { currentPage--; refresh(); }
+}
+
+function pageOlder() {
+  currentPage++;
+  refresh();
+}
+
 function refresh() {
   Promise.all([
-    fetch('/api/traffic?limit=200'),
+    fetch('/api/traffic?limit=' + PAGE_LIMIT + '&page=' + currentPage),
     fetch('/api/stats')
   ]).then(function(responses) {
     return Promise.all(responses.map(function(r) { return r.json(); }));
   }).then(function(results) {
     var traffic = results[0];
     var stats = results[1];
+    if (traffic.total === 0) currentPage = 0;
+    if (!traffic.entries.length && traffic.total > 0 && currentPage > 0) {
+      currentPage = 0;  // log shrank past the current window; jump to newest
+      return refresh();
+    }
     allEntries = traffic.entries;
     allEntries.sort(function(a, b) { return (b.timestamp_ms || 0) - (a.timestamp_ms || 0); });
     populateSourceFilter();
     renderStats(stats);
     applyFilters();
+    renderPagination(traffic.total);
     document.getElementById('last-refresh').textContent = 'Updated: ' + new Date().toLocaleTimeString();
   }).catch(function(e) {
     console.error('Refresh failed:', e);

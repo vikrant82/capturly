@@ -54,6 +54,10 @@ Issues = "https://github.com/vikrant82/capturly/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/capturly"]
 
+[tool.pytest.ini_options]
+# Always test the src/ tree, even when a capturly install shadows it on sys.path.
+pythonpath = ["src"]
+
 [tool.black]
 line-length = 100
 target-version = ["py39"]
