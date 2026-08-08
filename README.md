@@ -75,7 +75,7 @@ capturly --mode hybrid --backend https://api.example.com
 
 The built-in web dashboard (default: `http://localhost:9090`) provides:
 
-- **Traffic list** with filtering (All / AI / Non-AI), pagination, and protocol badges (AI, AGUI, SSE)
+- **Traffic list** with newest-first pagination, method/path/status filters, and tag chips (AI, AGUI, SSE, Tools, Tool Results)
 - **AI detail view** — system prompts, tool definitions, message history, assistant response, token usage
 - **AGUI detail view** — run metadata, reconstructed messages, tool calls with parsed arguments, reasoning, state snapshots
 - **Generic detail view** — collapsible request/response bodies and headers

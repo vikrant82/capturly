@@ -103,11 +103,55 @@ const lazyEntry = {
 const detailHtml = vm.runInContext(
   'renderDetail(' + JSON.stringify(lazyEntry) + ')', sandbox);
 assert(detailHtml.includes('data-rendered="false"'), 'sections start unrendered');
-assert(detailHtml.includes('data-section="messages"'), 'messages section present');
+assert(detailHtml.includes('data-section="new-inputs"'), 'new inputs section present');
+assert(!detailHtml.includes('data-section="messages-history"'),
+  'first-turn request has no history section');
 assert(detailHtml.includes('data-section="system-prompt"'), 'system prompt section present');
 assert(detailHtml.includes('data-section="raw-request"'), 'raw request section present');
 assert(!detailHtml.includes('UNIQUE_USER_MESSAGE_MARKER'),
   'message bodies are NOT rendered until expanded');
+
+// --- renderDetail: turn-aware Messages split (New Inputs vs History) ---
+const toolLoopEntry = {
+  method: 'POST', path: '/v1/chat/completions', status_code: 200,
+  timestamp_ms: 2000, duration_ms: 5,
+  request_body_size: 10, response_body_size: 20,
+  ai_insights: {
+    request: { model: 'gpt-4o', message_count: 5 },
+    response: { usage: { total_tokens: 30 } },
+  },
+  request_body: { model: 'gpt-4o', messages: [
+    { role: 'system', content: 'You are helpful.' },
+    { role: 'user', content: 'HISTORY_USER_MARKER' },
+    { role: 'assistant', content: null, tool_calls: [
+      { id: 'c1', type: 'function', function: { name: 'search', arguments: '{}' } },
+      { id: 'c2', type: 'function', function: { name: 'read', arguments: '{}' } },
+    ] },
+    { role: 'tool', tool_call_id: 'c1', content: 'TOOL_RESULT_MARKER_ONE' },
+    { role: 'tool', tool_call_id: 'c2', content: 'TOOL_RESULT_MARKER_TWO' },
+  ] },
+  response_body: { choices: [{ message: { role: 'assistant', content: 'done' } }] },
+  request_headers: { 'content-type': 'application/json' },
+  response_headers: { 'content-type': 'application/json' },
+};
+const loopHtml = vm.runInContext(
+  'renderDetail(' + JSON.stringify(toolLoopEntry) + ')', sandbox);
+assert(loopHtml.includes('data-section="new-inputs"'), 'tool loop: new inputs section present');
+assert(loopHtml.includes('data-section="messages-history"'), 'tool loop: history section present');
+assert(loopHtml.includes('New Inputs (2 &middot; tool)'),
+  'tool loop: new inputs label shows count and role');
+assert(loopHtml.includes('Messages History (2)'), 'tool loop: history label shows count');
+assert(!loopHtml.includes('TOOL_RESULT_MARKER_ONE'),
+  'tool results are NOT rendered until expanded');
+const newInputsBody = vm.runInContext("sectionRenderers['new-inputs']()", sandbox);
+assert(newInputsBody.includes('TOOL_RESULT_MARKER_ONE')
+  && newInputsBody.includes('TOOL_RESULT_MARKER_TWO'),
+  'all trailing tool results belong to new inputs');
+assert(!newInputsBody.includes('HISTORY_USER_MARKER'),
+  'earlier user message stays out of new inputs');
+const historyBody = vm.runInContext("sectionRenderers['messages-history']()", sandbox);
+assert(historyBody.includes('HISTORY_USER_MARKER'), 'history keeps the earlier user message');
+assert(!historyBody.includes('TOOL_RESULT_MARKER_ONE'), 'tool results stay out of history');
 
 // --- slim list shape: badges/filters use e.ai ---
 assert(vm.runInContext(`(function() {
@@ -121,7 +165,26 @@ assert(vm.runInContext(
 assert(vm.runInContext(
   `matchesFilters({ method: 'POST', path: '/a', status_code: 200 })`,
   sandbox) === false, 'ai tag does not match entries without ai');
+vm.runInContext(`filters = { method: null, path: '', status: null, source: null, tags: ['tool_results'] };`, sandbox);
+assert(vm.runInContext(
+  `matchesFilters({ tool_results: true, method: 'POST', path: '/a', status_code: 200 })`,
+  sandbox) === true, 'tool_results tag matches entries carrying tool results');
+assert(vm.runInContext(
+  `matchesFilters({ tools: true, method: 'POST', path: '/a', status_code: 200 })`,
+  sandbox) === false, 'tool_results tag does not match tool-call-only entries');
 vm.runInContext(`filters = { method: null, path: '', status: null, source: null, tags: [] };`, sandbox);
+
+// --- pageWindow: newest-first pagination bounds ---
+const win0 = vm.runInContext('pageWindow(218, 0, 200)', sandbox);
+assert(win0.start === 18 && win0.end === 218, 'page 0 anchors at the newest entries');
+const win1 = vm.runInContext('pageWindow(218, 1, 200)', sandbox);
+assert(win1.start === 0 && win1.end === 18, 'page 1 covers the remaining older entries');
+const win2 = vm.runInContext('pageWindow(218, 2, 200)', sandbox);
+assert(win2.start === 0 && win2.end === 0, 'out-of-range page collapses to empty');
+const winEmpty = vm.runInContext('pageWindow(0, 0, 200)', sandbox);
+assert(winEmpty.start === 0 && winEmpty.end === 0, 'empty log yields empty window');
+const winExact = vm.runInContext('pageWindow(200, 0, 200)', sandbox);
+assert(winExact.start === 0 && winExact.end === 200, 'exact multiple fills page 0');
 
 // --- text truncation ---
 const longText = 'x'.repeat(5000);
