@@ -123,6 +123,37 @@ assert(vm.runInContext(
   sandbox) === false, 'ai tag does not match entries without ai');
 vm.runInContext(`filters = { method: null, path: '', status: null, source: null, tags: [] };`, sandbox);
 
+// --- text truncation ---
+const longText = 'x'.repeat(5000);
+vm.runInContext('detailTexts = []; currentDetail = {};', sandbox);
+const trunc = vm.runInContext(
+  'renderLongText(' + JSON.stringify(longText) + ')', sandbox);
+assert(trunc.includes('x'.repeat(2000)), 'first 2000 chars rendered');
+assert(!trunc.includes('x'.repeat(2001)), 'content beyond limit not rendered');
+assert(trunc.includes('Show more (+3000 chars)'), 'show-more button reports remaining chars');
+const shortText = vm.runInContext(`renderLongText('short')`, sandbox);
+assert(shortText === 'short', 'short text renders untouched');
+
+// --- json tree child cap ---
+vm.runInContext('detailValues = [];', sandbox);
+const bigArr = vm.runInContext(
+  'renderJsonTree({ arr: Array.from({length: 250}, function(_, i) { return i; }) })', sandbox);
+assert(bigArr.includes('150 more (load)'), 'children beyond 100 are capped with load row');
+assert(bigArr.includes('data-val-idx'), 'load row references stored value');
+
+// --- copy source cap ---
+const hugeObj = 'renderJsonTree({ big: ' + JSON.stringify('y'.repeat(150000)) + ' })';
+const hugeTree = vm.runInContext(hugeObj, sandbox);
+assert(!hugeTree.includes('json-copy-src'), 'huge trees skip the hidden copy source');
+const smallTree = vm.runInContext(`renderJsonTree({ a: 1 })`, sandbox);
+assert(smallTree.includes('json-copy-src'), 'small trees keep the hidden copy source');
+
+// --- msgContent truncation ---
+const msgHtml = vm.runInContext(
+  'msgContent(' + JSON.stringify('z'.repeat(4000)) + ')', sandbox);
+assert(msgHtml.includes('Show more'), 'message content is truncated');
+assert(!msgHtml.includes('z'.repeat(2001)), 'message content capped at limit');
+
 if (failures > 0) {
   console.error(failures + ' assertion(s) failed');
   process.exit(1);
