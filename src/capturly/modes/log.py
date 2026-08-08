@@ -105,11 +105,12 @@ def build_combined_sse_log_entry(
     """Build one traffic entry whose response body is the combined SSE completion."""
     completed_timestamp_ms = int(time.time() * 1000)
     has_combined_completion = response_body is not None
-    combine_status = (
-        "aborted"
-        if stream_outcome["aborted"]
-        else "no_valid_chunks" if not has_combined_completion else "completed"
-    )
+    if stream_outcome["aborted"]:
+        combine_status = "aborted"
+    elif not has_combined_completion:
+        combine_status = "no_valid_chunks"
+    else:
+        combine_status = "completed"
     if response_body is None:
         response_body = {
             "combined_completion": None,
