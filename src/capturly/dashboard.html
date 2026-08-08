@@ -244,7 +244,19 @@ function statusClass(code) {
 }
 
 function copySection(btn) {
-  const body = btn.closest('details').querySelector('.detail-body');
+  const details = btn.closest('details');
+  if (!details) return;
+  if (details.getAttribute('data-rendered') !== 'true') {
+    const sectionId = details.getAttribute('data-section');
+    const renderSection = sectionRenderers[sectionId];
+    const lazyBody = details.querySelector('.detail-body');
+    if (renderSection && currentDetail && lazyBody) {
+      lazyBody.innerHTML = renderSection(currentDetail);
+      details.setAttribute('data-rendered', 'true');
+    }
+  }
+  const body = details.querySelector('.detail-body');
+  if (!body) return;
   // Clone offscreen and substitute each JSON tree with its full raw JSON,
   // so copying is complete regardless of which tree nodes are collapsed.
   var holder = document.createElement('div');
