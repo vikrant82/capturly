@@ -121,7 +121,7 @@ def test_phase1_full_pipeline():
             with urllib.request.urlopen(url, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
                 assert data["total"] == 1
-                assert data["entries"][0]["ai_insights"]["request"]["model"] == "gpt-4o"
+                assert data["entries"][0]["ai"]["model"] == "gpt-4o"
 
             # 5. Verify stats endpoint
             url = f"http://127.0.0.1:{port}/api/stats"
