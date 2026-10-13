@@ -185,7 +185,7 @@ def test_api_traffic_filter_ai():
     try:
         data = _get_json(port, "/api/traffic?ai=true")
         assert data["total"] == 2
-        assert all("ai_insights" in e for e in data["entries"])
+        assert all("ai" in e for e in data["entries"])
     finally:
         server.shutdown()
 
@@ -264,6 +264,47 @@ def test_summary_entry_tool_results_from_roles():
     plain = {**base, "ai_insights": {"request": {"roles": ["system", "user"]}}}
     assert "tool_results" not in dashboard._summary_entry(plain, 0)
     assert "tool_results" not in dashboard._summary_entry(base, 0)
+
+
+def test_summary_entry_recognizes_explicit_bedrock_tool_results_without_fake_role():
+    entry = {
+        "path": "/model/m/converse",
+        "ai_insights": {
+            "protocol": "bedrock_converse",
+            "request": {"roles": ["assistant", "user"], "has_tool_results": True},
+            "response": {"tool_call_names": ["search"]},
+        },
+    }
+
+    summary = dashboard._summary_entry(entry, 0)
+
+    assert summary["tool_results"] is True
+    assert summary["tools"] is True
+    assert summary["ai"]["message_count"] is None
+    assert "ai_insights" not in summary
+
+
+def test_static_summaries_do_not_retain_native_message_bodies():
+    entry = {
+        "path": "/model/m/converse",
+        "ai_insights": {
+            "protocol": "bedrock_converse",
+            "request": {
+                "model": "m",
+                "message_count": 1,
+                "messages": [{"role": "user", "content": [{"text": "large"}]}],
+                "system_prompts": ["secret prompt"],
+            },
+            "response": {"usage": {"total_tokens": 8}},
+        },
+    }
+
+    summary = dashboard._summary_entry(entry, 0)
+
+    assert summary["ai"]["model"] == "m"
+    assert summary["ai"]["total_tokens"] == 8
+    assert "large" not in json.dumps(summary)
+    assert "secret prompt" not in json.dumps(summary)
 
 
 def test_api_traffic_tool_results_flag(temp_recordings_dir):

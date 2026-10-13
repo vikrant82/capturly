@@ -12,11 +12,11 @@ The table shows the **newest 200 entries** by default and auto-refreshes every 3
 
 | Chip | Meaning |
 |------|---------|
-| AI | OpenAI-style chat completion traffic |
+| AI | OpenAI-style chat completion or Bedrock Converse traffic |
 | AGUI | Agent GUI protocol traffic |
 | SSE | Streaming responses that were combined |
 | Tools | The assistant's response issued tool calls |
-| Tool Results | The request carried tool output back to the model (`tool` / legacy `function` message roles) |
+| Tool Results | The request carried tool output back to the model (OpenAI `tool` / legacy `function` message roles, or Bedrock `toolResult` content) |
 
 `Tools` and `Tool Results` are complementary views of an agentic loop: one tags the call where the model asked for tools, the other tags the follow-up call where the results came back. Entries can have both.
 
@@ -24,7 +24,7 @@ The table shows the **newest 200 entries** by default and auto-refreshes every 3
 
 Click a row to open the detail panel. Sections render lazily on first expansion to keep large logs snappy, and each has a copy button.
 
-**AI entries (OpenAI protocol):**
+**AI entries (OpenAI and Bedrock Converse):**
 
 - **Overview** — source, status, timing, sizes
 - **AI meta** — model, token usage, finish reasons, stream flag, message count
@@ -33,10 +33,14 @@ Click a row to open the detail panel. Sections render lazily on first expansion 
 - **New Inputs** — the messages added after the last assistant turn: a user message, or one-or-more trailing tool results (parallel tool results stay together)
 - **Messages History** — the conversation up to and including that last assistant message; hidden when empty (first-turn requests)
 - **Assistant Response** — content and tool calls from the response
-- **SSE Info** — combine status and stream duration (combined streams only)
+- **SSE Info** — combine status and stream duration (SSE combined streams only)
 - **Raw Request / Raw Response** — full bodies as collapsible JSON trees; **Headers** — both sides
 
 **AGUI entries:** run metadata, reconstructed messages, tool calls with parsed arguments and results, reasoning, state snapshots.
+
+**Bedrock Converse entries:** generic Converse JSON and ConverseStream binary Amazon EventStream traffic are inspected for Claude and other compatible models on AWS `/model/{id}/converse[-stream]` routes and compatible gateway endpoints. This is not native Anthropic Messages API support. The detail view surfaces system and message history, new inputs, tools and results, generated text, usage, and stop reason. EventStream inspection is always on; `--combine-chunks` controls SSE only.
+
+For new EventStream entries in **LOG** mode, `response_body` contains the original stream bytes encoded as base64, with `response_body_encoding: "base64"`; `eventstream_response` and `ai_insights` contain the reconstructed response, and `eventstream_status` is `completed`, `aborted`, or `error`. In **RECORD** mode, streams are forwarded live and a successfully completed stream retains its exact bytes for replay. Historical logs whose stream bytes were previously lost cannot be reconstructed. Capturly does not supply credentials or re-sign AWS SigV4 requests; use already-valid authentication or a gateway that handles it.
 
 **Generic entries:** collapsible request/response bodies and headers.
 

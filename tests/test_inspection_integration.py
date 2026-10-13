@@ -3,6 +3,7 @@
 import json
 from unittest.mock import Mock
 
+from capturly.eventstream import EventStreamCapture
 from capturly.inspection import openai
 from capturly.modes import log
 
@@ -127,6 +128,38 @@ def test_build_combined_sse_log_entry_includes_ai_insights():
     assert "ai_insights" in entry
     assert entry["ai_insights"]["request"]["stream"] is True
     assert entry["ai_insights"]["response"]["assistant_content"] == ["Hey!"]
+
+
+def test_eventstream_bedrock_request_insights_survive_missing_native_response():
+    request_body = json.dumps(
+        {
+            "modelId": "bedrock-model",
+            "messages": [{"role": "user", "content": [{"text": "hello"}]}],
+        }
+    ).encode()
+    capture = EventStreamCapture(b"\xde\xad\xbe\xef", "error", "invalid event frame", None)
+
+    entry = log.build_eventstream_log_entry(
+        _make_handler(),
+        "POST",
+        "/model/bedrock-model/converse-stream",
+        request_body,
+        {"content-type": "application/json"},
+        200,
+        {"content-type": "application/vnd.amazon.eventstream"},
+        capture,
+        1000,
+    )
+
+    assert entry["ai_insights"]["protocol"] == "bedrock_converse"
+    assert entry["ai_insights"]["request"]["model"] == "bedrock-model"
+    assert entry["ai_insights"]["request"]["roles"] == ["user"]
+    assert "response" not in entry["ai_insights"]
+    assert "eventstream_response" not in entry
+    assert entry["response_body"] == "3q2+7w=="
+    assert entry["response_body_encoding"] == "base64"
+    assert entry["eventstream_status"] == "error"
+    assert entry["eventstream_error"] == "invalid event frame"
 
 
 def test_build_ai_insights_helper():

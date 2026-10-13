@@ -1,12 +1,13 @@
 """Log mode: proxy requests and persist complete traffic metadata."""
 
+import base64
 import json
 import os
 import time
 import urllib.error
 
-from .. import proxy, sse, storage, utils
-from ..inspection import openai as openai_inspection
+from .. import eventstream, proxy, sse, storage, utils
+from ..inspection import bedrock, build_ai_insights
 
 
 def _source_meta(handler):
@@ -84,7 +85,7 @@ def build_log_entry(
     }
     if started_timestamp_ms is not None:
         entry["duration_ms"] = max(0, completed_timestamp_ms - started_timestamp_ms)
-    ai_insights = openai_inspection.build_ai_insights(path, request_body, response_body)
+    ai_insights = build_ai_insights(path, request_body, response_body)
     if ai_insights is not None:
         entry["ai_insights"] = ai_insights
     return entry
@@ -143,10 +144,93 @@ def build_combined_sse_log_entry(
     }
     if stream_outcome["error"]:
         entry["sse_error"] = stream_outcome["error"]
-    ai_insights = openai_inspection.build_ai_insights(path, request_body, response_body)
+    ai_insights = build_ai_insights(path, request_body, response_body)
     if ai_insights is not None:
         entry["ai_insights"] = ai_insights
     return entry
+
+
+def build_eventstream_log_entry(
+    handler,
+    method,
+    path,
+    request_body,
+    request_headers,
+    status_code,
+    response_headers,
+    capture,
+    started_timestamp_ms,
+):
+    """Build exact binary capture metadata and optional native Bedrock insights.
+
+    ``capture`` is an EventStreamCapture. Partial native responses are retained
+    separately from the base64 body; only eventstream_status declares completion.
+    EventStream observation is always enabled; combine_chunks applies to SSE only.
+    This builder performs no I/O and assumes request-local capture state.
+    """
+    completed_timestamp_ms = int(time.time() * 1000)
+    entry = {
+        **_source_meta(handler),
+        "timestamp_ms": completed_timestamp_ms,
+        "method": method,
+        "path": path,
+        "cache_key": storage.get_cache_key(method, path, request_body),
+        "request_headers": request_headers,
+        "request_body": utils.body_for_log_entry(request_body, request_headers),
+        "request_body_size": len(request_body),
+        "status_code": status_code,
+        "response_headers": response_headers,
+        "response_body": base64.b64encode(capture.body).decode("ascii"),
+        "response_body_encoding": "base64",
+        "response_body_size": len(capture.body),
+        "duration_ms": max(0, completed_timestamp_ms - started_timestamp_ms),
+        "eventstream": True,
+        "eventstream_status": capture.status,
+    }
+    if capture.error:
+        entry["eventstream_error"] = capture.error
+    if capture.response is not None:
+        entry["eventstream_response"] = capture.response
+    response_for_inspection = capture.response
+    if response_for_inspection is None and bedrock.is_bedrock_request(path, request_body):
+        # The captured EventStream bytes are binary, not a JSON response body.
+        # An empty response preserves request insights without inventing a
+        # response or changing response-less OpenAI behavior.
+        response_for_inspection = b""
+    if response_for_inspection is not None:
+        insights = build_ai_insights(path, request_body, response_for_inspection)
+        if insights is not None:
+            entry["ai_insights"] = insights
+    return entry
+
+
+def _log_eventstream(handler, response, method, path, body, request_headers, started_timestamp_ms):
+    """Use the same binary capture/log path for successful and HTTPError responses."""
+    response_headers = dict(response.headers)
+    status_code = response.status
+    capture = eventstream.respond_eventstream(
+        handler,
+        response,
+        status_code,
+        response_headers,
+        expect_bedrock=bedrock.is_bedrock_request(path, body),
+    )
+    handler._enqueue_traffic_log_entry(
+        build_eventstream_log_entry(
+            handler,
+            method,
+            path,
+            body,
+            request_headers,
+            status_code,
+            response_headers,
+            capture,
+            started_timestamp_ms,
+        )
+    )
+    handler.log_message(
+        f"📝 EventStream: {status_code} ({capture.status}, {len(capture.body)} bytes)"
+    )
 
 
 def log_and_proxy(handler, method, path, body):
@@ -157,13 +241,19 @@ def log_and_proxy(handler, method, path, body):
 
     request_headers = {k: v for k, v in handler.headers.items()}
     started_timestamp_ms = int(time.time() * 1000)
+    eventstream_started = False
 
     try:
         with proxy.forward_request(handler, method, path, body) as response:
             response_headers = dict(response.headers)
             status_code = response.status
 
-            if handler._is_sse_response(response_headers):
+            if utils.is_eventstream_response(response_headers):
+                eventstream_started = True
+                _log_eventstream(
+                    handler, response, method, path, body, request_headers, started_timestamp_ms
+                )
+            elif handler._is_sse_response(response_headers):
                 started_timestamp_ms = int(time.time() * 1000)
                 if handler.combine_chunks:
                     accumulator = sse.new_chunk_accumulator()
@@ -257,6 +347,22 @@ def log_and_proxy(handler, method, path, body):
                 )
 
     except urllib.error.HTTPError as e:
+        if eventstream_started:
+            e.close()
+            handler.log_message(f"✗ EventStream log error after response started: {e}")
+            return
+        if utils.is_eventstream_response(dict(e.headers)):
+            eventstream_started = True
+            try:
+                with e:
+                    _log_eventstream(
+                        handler, e, method, path, body, request_headers, started_timestamp_ms
+                    )
+            except Exception as stream_error:
+                handler.log_message(
+                    f"✗ EventStream log error after response started: {stream_error}"
+                )
+            return
         error_body = e.read()
         proxy.respond_raw(handler, error_body, e.code, dict(e.headers))
         handler._enqueue_traffic_log_entry(
@@ -276,7 +382,8 @@ def log_and_proxy(handler, method, path, body):
 
     except Exception as e:
         handler.log_message(f"✗ Proxy/log error: {e}")
-        handler._respond_error(f"Proxy failed: {e}", 502)
+        if not eventstream_started:
+            handler._respond_error(f"Proxy failed: {e}", 502)
 
 
 _log_and_proxy = log_and_proxy

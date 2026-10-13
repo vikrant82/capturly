@@ -174,6 +174,79 @@ assert(vm.runInContext(
   sandbox) === false, 'tool_results tag does not match tool-call-only entries');
 vm.runInContext(`filters = { method: null, path: '', status: null, source: null, tags: [] };`, sandbox);
 
+// --- Bedrock Converse rendering uses native messages and the combined stream response ---
+const bedrockEntry = {
+  method: 'POST', path: '/anthropic/deployments/dpl-4/converse-stream', status_code: 200,
+  timestamp_ms: 3000, duration_ms: 8, request_body_size: 40, response_body_size: 12,
+  eventstream: true, eventstream_status: 'completed', response_body_encoding: 'base64',
+  response_body: 'AQIDBASE64',
+  ai_insights: {
+    protocol: 'bedrock_converse',
+    request: {
+      model: 'gateway-bedrock-model', message_count: 3, roles: ['user', 'assistant', 'user'],
+      system_prompts: ['Use the tool safely'], stream: true, has_tool_results: true,
+      tool_names: ['search'], tool_count: 1,
+    },
+    response: {
+      model: 'gateway-bedrock-model',
+      usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17, cacheReadInputTokens: 3,
+        prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 },
+      finish_reasons: ['tool_use'], assistant_content: ['<script>alert(1)</script>'],
+    },
+  },
+  request_body: {
+    modelId: 'gateway-bedrock-model', system: [{ text: 'Use the tool safely' }],
+    toolConfig: { tools: [{ toolSpec: {
+      name: 'search', description: 'Find items',
+      inputSchema: { json: { type: 'object', properties: { q: { type: 'string' } } } },
+    } }] },
+    messages: [
+      { role: 'user', content: [{ text: 'OLD_HISTORY_MARKER' }] },
+      { role: 'assistant', content: [{ text: 'prior answer' }] },
+      { role: 'user', content: [{ toolResult: { toolUseId: 'tool-1', content: [
+        { text: '<img src=x onerror=alert(2)>' }, { json: { found: true } },
+      ] } }] },
+    ],
+  },
+  eventstream_response: {
+    output: { message: { role: 'assistant', content: [
+      { text: '<script>alert(1)</script>' },
+      { toolUse: { toolUseId: 'tool-2', name: 'search', input: { q: 'cats' } } },
+      { reasoningContent: { reasoningText: { text: 'private rationale', signature: 'sig-42' } } },
+      { image: { format: 'png', source: { bytes: 'iVBORw0KGgo=' } } },
+    ] } },
+    stopReason: 'tool_use', usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17 },
+  },
+  request_headers: {}, response_headers: {},
+};
+const bedrockDetail = vm.runInContext(
+  'renderDetail(' + JSON.stringify(bedrockEntry) + ')', sandbox);
+assert(bedrockDetail.includes('Bedrock Converse'), 'Bedrock protocol is visible');
+assert(bedrockDetail.includes('gateway-bedrock-model'), 'Bedrock request model is visible');
+assert(bedrockDetail.includes('Stream') && bedrockDetail.includes('Yes'), 'Bedrock stream state is visible');
+assert(bedrockDetail.includes('12 prompt + 5 completion = 17 total'), 'Bedrock usage is visible');
+assert(bedrockDetail.includes('Finish') && bedrockDetail.includes('tool_use'), 'Bedrock stop reason is visible');
+assert(bedrockDetail.includes('Tools (1)'), 'Bedrock tool definitions are visible');
+assert(bedrockDetail.includes('New Inputs (1 &middot; user)'), 'user tool results remain user messages');
+assert(bedrockDetail.includes('Messages History (2)'), 'Bedrock message history is split by assistant turns');
+assert(bedrockDetail.includes('EventStream Info'), 'EventStream status section is visible');
+const bedrockTools = vm.runInContext("sectionRenderers['tools']()", sandbox);
+assert(bedrockTools.includes('search') && bedrockTools.includes('Input schema'), 'Bedrock tool schema renders');
+const bedrockInputs = vm.runInContext("sectionRenderers['new-inputs']()", sandbox);
+assert(bedrockInputs.includes('Tool result') && bedrockInputs.includes('tool-1'), 'user tool result renders structurally');
+assert(bedrockInputs.includes('&lt;img src=x onerror=alert(2)&gt;'), 'untrusted tool result text is escaped');
+const bedrockAssistant = vm.runInContext("sectionRenderers['assistant-response']()", sandbox);
+assert(bedrockAssistant.includes('search') && bedrockAssistant.includes('cats'), 'native tool use renders');
+assert(bedrockAssistant.includes('reasoningContent') && bedrockAssistant.includes('sig-42'),
+  'reasoning and signature remain structurally inspectable');
+assert(bedrockAssistant.includes('image') && bedrockAssistant.includes('iVBORw0KGgo='),
+  'multimodal blocks remain structurally inspectable');
+assert(bedrockAssistant.includes('&lt;script&gt;alert(1)&lt;/script&gt;')
+  && !bedrockAssistant.includes('<script>alert(1)</script>'), 'native response text is safely escaped');
+const rawBedrockResponse = vm.runInContext("sectionRenderers['raw-response']()", sandbox);
+assert(rawBedrockResponse.includes('AQIDBASE64') && !rawBedrockResponse.includes('eventstream_response'),
+  'raw EventStream bytes remain inspectable as encoded data, not parsed JSON');
+
 // --- pageWindow: newest-first pagination bounds ---
 const win0 = vm.runInContext('pageWindow(218, 0, 200)', sandbox);
 assert(win0.start === 18 && win0.end === 218, 'page 0 anchors at the newest entries');

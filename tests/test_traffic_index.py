@@ -3,6 +3,7 @@
 import json
 import os
 
+from capturly.dashboard import _compute_stats, _summary_entry
 from capturly.traffic_index import TrafficIndex
 
 
@@ -79,6 +80,39 @@ def test_summaries_are_slim(tmp_path):
     text = json.dumps(idx.summaries())
     assert "S" * 100 not in text
     assert "system_prompts" not in text
+
+
+def test_file_and_static_summaries_match_tokens_and_tool_flags(tmp_path):
+    entry = _entry(
+        ai_insights={
+            "protocol": "bedrock_converse",
+            "request": {
+                "model": "bedrock-model",
+                "message_count": 2,
+                "roles": ["assistant", "user"],
+                "has_tool_results": True,
+                "tool_names": ["search"],
+                "tool_count": 1,
+                "messages": [{"role": "user", "content": [{"text": "not in summary"}]}],
+            },
+            "response": {"usage": {"total_tokens": 17}, "tool_call_names": ["search"]},
+        }
+    )
+    log = str(tmp_path / "traffic_log.jsonl")
+    _write_jsonl(log, [entry])
+    indexed = TrafficIndex(log)
+    indexed.sync()
+
+    static_summary = _summary_entry(entry, 0)
+    file_summary = indexed.summaries()[0]
+
+    assert static_summary == file_summary
+    assert file_summary["ai"]["total_tokens"] == 17
+    assert file_summary["tools"] is True
+    assert file_summary["tool_results"] is True
+    assert "not in summary" not in json.dumps(file_summary)
+    assert indexed.stats()["total_tokens"] == 17
+    assert _compute_stats([entry]) == indexed.stats()
 
 
 def test_agui_flag_in_summary(tmp_path):

@@ -2,7 +2,7 @@
 
 **Record, replay, and debug any HTTP API — with built-in AI traffic intelligence**
 
-Capturly is an HTTP proxy that captures, replays, and inspects API traffic. It works with any REST/GraphQL endpoint but goes deeper on AI protocols — automatically detecting OpenAI and AGUI (Agent GUI) traffic, extracting system prompts, combining streaming chunks, and surfacing tool calls.
+Capturly is an HTTP proxy that captures, replays, and inspects API traffic. It works with any REST/GraphQL endpoint but goes deeper on AI protocols — automatically detecting OpenAI, AGUI (Agent GUI), and generic Bedrock Converse traffic, extracting prompts, combining supported streaming chunks, and surfacing tool calls.
 
 ## Quick Start
 
@@ -34,6 +34,12 @@ The dashboard extracts:
 - Token usage
 - Complete conversation history (streaming chunks combined)
 - AGUI agent runs: messages, tool calls, reasoning, and state
+
+### Inspect Bedrock Converse Traffic
+
+Capturly inspects generic Bedrock Converse JSON and ConverseStream binary Amazon EventStream traffic for Claude and other compatible models, including AWS `/model/{id}/converse` and `/model/{id}/converse-stream` endpoints and compatible gateways. This does not include the native Anthropic Messages API. The dashboard shows system and message history, new inputs, tools and results, generated text, usage, and stop reason. EventStream inspection is always enabled; `--combine-chunks` applies to SSE only.
+
+Capturly forwards requests but does not provide credentials or re-sign requests with AWS SigV4. Use authentication that is already valid for the upstream endpoint, or a gateway that handles authentication; do not assume local SDK signing works automatically through the proxy.
 
 ### Create Deterministic Test Fixtures
 

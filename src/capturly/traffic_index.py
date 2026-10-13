@@ -39,7 +39,9 @@ def _build_summary(entry: dict, index: int) -> dict:
     ai = entry.get("ai_insights")
     if ai and isinstance(ai, dict):
         ai_req = ai.get("request") or {}
+        ai_req = ai_req if isinstance(ai_req, dict) else {}
         ai_resp = ai.get("response") or {}
+        ai_resp = ai_resp if isinstance(ai_resp, dict) else {}
         slim_ai: dict = {
             "model": ai_req.get("model"),
             "message_count": ai_req.get("message_count"),
@@ -51,10 +53,12 @@ def _build_summary(entry: dict, index: int) -> dict:
         if isinstance(usage, dict):
             slim_ai["total_tokens"] = usage.get("total_tokens", 0)
         summary["ai"] = slim_ai
-        if isinstance(ai_resp, dict) and ai_resp.get("tool_call_names"):
+        if ai_resp.get("tool_call_names"):
             summary["tools"] = True
         roles = ai_req.get("roles")
-        if isinstance(roles, list) and any(role in ("tool", "function") for role in roles):
+        if ai_req.get("has_tool_results") is True or (
+            isinstance(roles, list) and any(role in ("tool", "function") for role in roles)
+        ):
             summary["tool_results"] = True
     elif isinstance(resp, dict) and resp.get("tool_calls"):
         summary["tools"] = True
