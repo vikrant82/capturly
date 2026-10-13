@@ -77,6 +77,12 @@ def is_sse_request(headers):
     return "text/event-stream" in accept
 
 
+def is_eventstream_response(headers):
+    """Identify Amazon's binary media type, independent of vendor or URI path."""
+    content_type = get_header_value(headers, "Content-Type").split(";", 1)[0].strip().lower()
+    return content_type == "application/vnd.amazon.eventstream"
+
+
 def backend_timeout_seconds(headers):
     """Use a longer timeout for SSE streams than for normal proxied calls."""
     if is_sse_request(headers):

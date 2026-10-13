@@ -433,6 +433,15 @@ function renderToolCalls(toolCalls) {
 function renderTools(tools) {
   if (!tools || !tools.length) return '';
   return tools.map(function(tool) {
+    if (!tool || typeof tool !== 'object') return '<div class="tool-card">' + renderJsonTree(tool) + '</div>';
+    if (tool && tool.toolSpec && typeof tool.toolSpec === 'object') {
+      var spec = tool.toolSpec;
+      var bedrockHtml = '<div class="tool-card"><div class="tool-name">' + esc(spec.name || 'unknown') + '</div>';
+      if (spec.description) bedrockHtml += '<div class="tool-desc">' + esc(spec.description) + '</div>';
+      if (spec.inputSchema != null) bedrockHtml += '<h4>Input schema</h4>' + renderJsonTree(spec.inputSchema);
+      bedrockHtml += '</div>';
+      return bedrockHtml;
+    }
     var func = tool.function || tool;
     var html = '<div class="tool-card"><div class="tool-name">' + esc(func.name || 'unknown') + '</div>';
     if (func.description) html += '<div class="tool-desc">' + esc(func.description) + '</div>';
@@ -450,7 +459,7 @@ function renderMessage(msg) {
   }
   var html = '<div class="msg ' + esc(role) + '">';
   html += '<div class="msg-role">' + roleLabel + '</div>';
-  html += '<div class="msg-content">' + msgContent(msg.content) + '</div>';
+  html += '<div class="msg-content">' + renderBedrockContent(msg.content) + '</div>';
   if (msg.tool_calls && msg.tool_calls.length) {
     html += renderToolCalls(msg.tool_calls);
   }
@@ -458,11 +467,61 @@ function renderMessage(msg) {
   return html;
 }
 
+function renderBedrockContent(content) {
+  if (!Array.isArray(content) || !content.some(function(block) {
+    return block && typeof block === 'object' && Object.keys(block).some(function(key) {
+      return ['text', 'image', 'document', 'video', 'audio', 'toolUse', 'toolResult',
+        'reasoningContent', 'guardContent', 'cachePoint', 'searchResult', 'citationsContent'].indexOf(key) !== -1;
+    });
+  })) return msgContent(content);
+  return content.map(function(block) {
+    if (!block || typeof block !== 'object') return '<div class="content-block">' + renderJsonTree(block) + '</div>';
+    if (typeof block.text === 'string') {
+      var textHtml = '<div class="content-block">' + renderLongText(block.text) + '</div>';
+      if (Object.keys(block).length > 1) textHtml += renderJsonTree(block);
+      return textHtml;
+    }
+    if (block.toolUse && typeof block.toolUse === 'object') {
+      var use = block.toolUse;
+      var html = '<div class="tool-card"><div class="tool-name">' + esc(use.name || 'Tool call') + '</div>';
+      if (use.toolUseId) html += '<div class="tool-desc">' + esc(use.toolUseId) + '</div>';
+      if (use.input != null) html += '<h4>Input</h4>' + renderJsonTree(use.input);
+      if (Object.keys(use).some(function(key) { return ['name', 'toolUseId', 'input'].indexOf(key) === -1; })) {
+        html += '<h4>Full tool call</h4>' + renderJsonTree(use);
+      }
+      html += '</div>';
+      return html;
+    }
+    if (block.toolResult && typeof block.toolResult === 'object') {
+      var result = block.toolResult;
+      return '<div class="tool-card"><div class="tool-name">Tool result'
+        + (result.toolUseId ? ' (' + esc(result.toolUseId) + ')' : '')
+        + '</div>' + renderJsonTree(result) + '</div>';
+    }
+    // Reasoning, signatures, image/document and model-specific blocks remain
+    // inspectable as structured data; presentation never executes their text.
+    return '<div class="content-block">' + renderJsonTree(block) + '</div>';
+  }).join('');
+}
+
+function bedrockResponseBody(e) {
+  if (e.eventstream_response && typeof e.eventstream_response === 'object') return e.eventstream_response;
+  if (e.response_body && typeof e.response_body === 'object') return e.response_body;
+  var aiResponse = e.ai_insights && e.ai_insights.response;
+  if (aiResponse && aiResponse.message) return { output: { message: aiResponse.message } };
+  return {};
+}
+
 function renderOverview(e) {
   var lines = 'Source: ' + sourceLabel(e) + '\nStatus: ' + e.status_code + '\nTime: ' + fmtTime(e.timestamp_ms) + '\nDuration: ' + fmtDuration(e.duration_ms) + '\nRequest: ' + fmtSize(e.request_body_size) + '  |  Response: ' + fmtSize(e.response_body_size);
   if (e.sse) {
     lines += '\nSSE: ' + (e.sse_combine_status || 'streaming');
     if (e.sse_duration_ms != null) lines += '  (' + e.sse_duration_ms + 'ms)';
+  }
+  if (e.eventstream) {
+    lines += '\nEventStream: ' + (e.eventstream_status || 'streaming');
+    if (e.eventstream_error) lines += '\nEventStream error: ' + e.eventstream_error;
+    if (e.response_body_encoding) lines += '\nResponse body encoding: ' + e.response_body_encoding;
   }
   return '<div class="detail-section"><h3>Overview</h3><pre>' + esc(lines) + '</pre></div>';
 }
@@ -472,9 +531,11 @@ function renderAIMeta(e) {
   var aiReq = ai.request || {};
   var aiRes = ai.response || {};
   var req = (e.request_body && typeof e.request_body === 'object') ? e.request_body : {};
-  var res = (e.response_body && typeof e.response_body === 'object') ? e.response_body : {};
+  var res = ai.protocol === 'bedrock_converse' ? bedrockResponseBody(e)
+    : ((e.response_body && typeof e.response_body === 'object') ? e.response_body : {});
   var html = '<div class="ai-meta">';
-  html += metaItem('Model', aiReq.model || req.model || '-');
+  if (ai.protocol === 'bedrock_converse') html += metaItem('Protocol', 'Bedrock Converse');
+  html += metaItem('Model', aiReq.model || req.model || req.modelId || '-');
   if (aiRes.usage) {
     var u = aiRes.usage;
     html += metaItem('Tokens', (u.prompt_tokens||0) + ' prompt + ' + (u.completion_tokens||0) + ' completion = ' + (u.total_tokens||0) + ' total');
@@ -482,8 +543,9 @@ function renderAIMeta(e) {
   if (aiRes.finish_reasons && aiRes.finish_reasons.length) {
     html += metaItem('Finish', aiRes.finish_reasons.join(', '));
   }
-  html += metaItem('Stream', req.stream ? 'Yes' : 'No');
+  html += metaItem('Stream', (aiReq.stream || req.stream) ? 'Yes' : 'No');
   if (aiReq.message_count) html += metaItem('Messages', aiReq.message_count);
+  if (aiReq.tool_count) html += metaItem('Tools', aiReq.tool_count);
   html += '</div>';
   return html;
 }
@@ -504,20 +566,25 @@ function renderChoices(choices) {
 }
 
 function registerAISections(e) {
+  var bedrock = e.ai_insights && e.ai_insights.protocol === 'bedrock_converse';
   var aiReq = (e.ai_insights && e.ai_insights.request) || {};
   var req = (e.request_body && typeof e.request_body === 'object') ? e.request_body : {};
-  var res = (e.response_body && typeof e.response_body === 'object') ? e.response_body : {};
-  var sysPrompts = aiReq.system_prompts || [];
+  var res = bedrock ? bedrockResponseBody(e)
+    : ((e.response_body && typeof e.response_body === 'object') ? e.response_body : {});
+  var sysPrompts = Array.isArray(aiReq.system_prompts) ? aiReq.system_prompts : [];
   if (sysPrompts.length) {
     sectionRenderers['system-prompt'] = function() {
       return '<pre>' + renderLongText(sysPrompts.join('\n---\n')) + '</pre>';
     };
   }
-  var tools = req.tools || [];
+  var toolList = bedrock ? (req.toolConfig && req.toolConfig.tools) : req.tools;
+  var tools = Array.isArray(toolList) ? toolList : [];
   if (tools.length) {
     sectionRenderers['tools'] = function() { return renderTools(tools); };
   }
-  var messages = (req.messages || []).filter(function(m) { return m.role !== 'system'; });
+  var messages = (Array.isArray(req.messages) ? req.messages : []).filter(function(m) {
+    return m && typeof m === 'object' && m.role !== 'system';
+  });
   // Turn-aware split: new inputs are the messages added after the last
   // assistant turn (a user message, or one-or-more tool results); history
   // runs up to and including that assistant message. With no assistant
@@ -536,8 +603,12 @@ function registerAISections(e) {
   if (history.length) {
     sectionRenderers['messages-history'] = function() { return history.map(renderMessage).join(''); };
   }
-  var choices = res.choices || [];
-  if (choices.length) {
+  var choices = Array.isArray(res.choices) ? res.choices : [];
+  var nativeMessage = bedrock && res.output && res.output.message;
+  if (bedrock && !nativeMessage && e.ai_insights.response) nativeMessage = e.ai_insights.response.message;
+  if (bedrock && nativeMessage && typeof nativeMessage === 'object') {
+    sectionRenderers['assistant-response'] = function() { return renderMessage(nativeMessage); };
+  } else if (choices.length) {
     sectionRenderers['assistant-response'] = function() { return renderChoices(choices); };
   }
   if (e.sse && e.sse_combine_status) {
@@ -546,6 +617,14 @@ function registerAISections(e) {
       if (e.sse_duration_ms != null) sseInfo += '\nDuration: ' + e.sse_duration_ms + 'ms';
       if (e.sse_error) sseInfo += '\nError: ' + e.sse_error;
       return '<pre>' + esc(sseInfo) + '</pre>';
+    };
+  }
+  if (e.eventstream) {
+    sectionRenderers['eventstream-info'] = function() {
+      var info = 'Status: ' + (e.eventstream_status || 'unknown');
+      if (e.eventstream_error) info += '\nError: ' + e.eventstream_error;
+      if (e.response_body_encoding) info += '\nRaw response encoding: ' + e.response_body_encoding;
+      return '<pre>' + esc(info) + '</pre>';
     };
   }
   sectionRenderers['raw-request'] = function() { return renderJsonTree(e.request_body); };
@@ -677,7 +756,15 @@ function renderDetail(e) {
       html += collapsible('&#x1F4DA; Messages History (' + parts.history.length + ')', 'messages-history');
     }
     if (parts.choices.length) html += collapsible('&#x1F916; Assistant Response', 'assistant-response');
+    else if (e.ai_insights.protocol === 'bedrock_converse') {
+      var bedrockResponse = bedrockResponseBody(e);
+      var bedrockMessage = bedrockResponse.output && bedrockResponse.output.message;
+      if (bedrockMessage || (e.ai_insights.response && e.ai_insights.response.message)) {
+        html += collapsible('&#x1F916; Assistant Response', 'assistant-response');
+      }
+    }
     if (e.sse && e.sse_combine_status) html += collapsible('&#x1F4E1; SSE Info', 'sse-info');
+    if (e.eventstream) html += collapsible('&#x1F4E1; EventStream Info', 'eventstream-info');
     html += collapsible('Raw Request', 'raw-request');
     html += collapsible('Raw Response', 'raw-response');
   } else if (e.response_body && typeof e.response_body === 'object' && e.response_body.object === 'agui.completion') {

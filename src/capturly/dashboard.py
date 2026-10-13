@@ -44,19 +44,21 @@ def _compute_stats(entries: list) -> dict:
 
     for entry in entries:
         insights = entry.get("ai_insights")
-        if not insights:
+        if not isinstance(insights, dict) or not insights:
             continue
         ai_requests += 1
 
         req = insights.get("request", {})
-        model = req.get("model")
+        model = req.get("model") if isinstance(req, dict) else None
         if model and model not in models:
             models.append(model)
 
         resp = insights.get("response", {})
-        usage = resp.get("usage")
+        usage = resp.get("usage") if isinstance(resp, dict) else None
         if isinstance(usage, dict):
-            total_tokens += usage.get("total_tokens", 0)
+            tokens = usage.get("total_tokens")
+            if isinstance(tokens, int):
+                total_tokens += tokens
 
     return {
         "total_requests": total_requests,
@@ -80,8 +82,6 @@ def _summary_entry(entry: dict, index: int) -> dict:
         "backend_url": entry.get("backend_url"),
         "duration_ms": entry.get("duration_ms"),
     }
-    if "ai_insights" in entry:
-        summary["ai_insights"] = entry["ai_insights"]
     if entry.get("sse"):
         summary["sse"] = True
     resp = entry.get("response_body")
@@ -89,12 +89,28 @@ def _summary_entry(entry: dict, index: int) -> dict:
         summary["agui"] = True
     # Detect tool calls for badge
     ai = entry.get("ai_insights")
-    if ai and isinstance(ai, dict):
+    if isinstance(ai, dict) and ai:
+        ai_req = ai.get("request")
+        ai_req = ai_req if isinstance(ai_req, dict) else {}
         ai_resp = ai.get("response")
-        if isinstance(ai_resp, dict) and ai_resp.get("tool_call_names"):
+        ai_resp = ai_resp if isinstance(ai_resp, dict) else {}
+        slim_ai = {
+            "model": ai_req.get("model"),
+            "message_count": ai_req.get("message_count"),
+        }
+        if ai_req.get("tool_names"):
+            slim_ai["tool_names"] = ai_req["tool_names"]
+            slim_ai["tool_count"] = ai_req.get("tool_count", len(ai_req["tool_names"]))
+        usage = ai_resp.get("usage")
+        if isinstance(usage, dict):
+            slim_ai["total_tokens"] = usage.get("total_tokens", 0)
+        summary["ai"] = slim_ai
+        if ai_resp.get("tool_call_names"):
             summary["tools"] = True
-        roles = (ai.get("request") or {}).get("roles")
-        if isinstance(roles, list) and any(role in ("tool", "function") for role in roles):
+        roles = ai_req.get("roles")
+        if ai_req.get("has_tool_results") is True or (
+            isinstance(roles, list) and any(role in ("tool", "function") for role in roles)
+        ):
             summary["tool_results"] = True
     elif isinstance(resp, dict) and resp.get("tool_calls"):
         summary["tools"] = True
@@ -179,7 +195,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             indexed = list(enumerate(self._get_entries()))
             if ai_only:
-                indexed = [(i, e) for i, e in indexed if "ai_insights" in e]
+                indexed = [
+                    (i, e)
+                    for i, e in indexed
+                    if isinstance(e.get("ai_insights"), dict) and e.get("ai_insights")
+                ]
             summaries = [_summary_entry(e, i) for i, e in indexed]
 
         total = len(summaries)
