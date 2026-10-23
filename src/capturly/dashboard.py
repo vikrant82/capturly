@@ -14,6 +14,7 @@ from socketserver import ThreadingMixIn
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
+from .inspection import ensure_ai_insights
 from .traffic_index import TrafficIndex
 
 # Dashboard frontend, served from the packaged HTML asset.
@@ -43,6 +44,7 @@ def _compute_stats(entries: list) -> dict:
     models: list = []
 
     for entry in entries:
+        ensure_ai_insights(entry)
         insights = entry.get("ai_insights")
         if not isinstance(insights, dict) or not insights:
             continue
@@ -70,6 +72,7 @@ def _compute_stats(entries: list) -> dict:
 
 def _summary_entry(entry: dict, index: int) -> dict:
     """Return a lightweight summary of a traffic entry for list views (static mode)."""
+    ensure_ai_insights(entry)
     summary = {
         "_index": index,
         "timestamp_ms": entry.get("timestamp_ms"),
@@ -195,6 +198,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             indexed = list(enumerate(self._get_entries()))
             if ai_only:
+                for _, e in indexed:
+                    ensure_ai_insights(e)
                 indexed = [
                     (i, e)
                     for i, e in indexed
@@ -238,7 +243,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if index < 0 or index >= len(entries):
             self._send_json({"error": "Entry not found"}, status=404)
             return
-        self._send_json(entries[index])
+        entry = entries[index]
+        ensure_ai_insights(entry)
+        self._send_json(entry)
 
     def _serve_stats(self):
         if self.index is not None:

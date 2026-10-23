@@ -11,6 +11,8 @@ import os
 import threading
 from typing import Optional
 
+from .inspection import ensure_ai_insights
+
 
 def _build_summary(entry: dict, index: int) -> dict:
     """Build the slim list-view summary for a traffic entry.
@@ -19,6 +21,7 @@ def _build_summary(entry: dict, index: int) -> dict:
     and nothing larger: no system prompts, no message bodies, no raw bodies.
     Flag derivation mirrors the dashboard's legacy _summary_entry rules.
     """
+    ensure_ai_insights(entry)
     summary: dict = {
         "_index": index,
         "timestamp_ms": entry.get("timestamp_ms"),
@@ -144,7 +147,10 @@ class TrafficIndex:
             obj = json.loads(raw.decode("utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return None
-        return obj if isinstance(obj, dict) else None
+        if not isinstance(obj, dict):
+            return None
+        ensure_ai_insights(obj)
+        return obj
 
     def _reset_locked(self) -> None:
         self._entries = []

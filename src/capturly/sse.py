@@ -204,14 +204,226 @@ def _merge_message_fields(state, message, incoming):
             message[field] = value
 
 
+def _ensure_responses_output_item(accumulator, output_index, default_item=None):
+    """Return the output item dict for output_index, initializing and ordering it if needed."""
+    if not isinstance(output_index, int) or isinstance(output_index, bool) or output_index < 0:
+        output_index = 0
+    items = accumulator["output_items"]
+    order = accumulator["output_order"]
+    if output_index not in items:
+        items[output_index] = dict(default_item) if isinstance(default_item, dict) else {}
+    if output_index not in order:
+        order.append(output_index)
+    return items[output_index]
+
+
+def _ensure_responses_list_slot(items_list, index, default_factory):
+    """Ensure items_list has a dict at index, padding with default_factory() as needed."""
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+        index = 0
+    while len(items_list) <= index:
+        items_list.append(default_factory())
+    if not isinstance(items_list[index], dict):
+        items_list[index] = default_factory()
+    return items_list[index]
+
+
+def _merge_responses_output_item(target, item):
+    """Merge an output item dict into target without clobbering accumulated deltas with empty values."""
+    for key, value in item.items():
+        if (
+            key in ("content", "summary")
+            and isinstance(value, list)
+            and not value
+            and target.get(key)
+        ):
+            continue
+        if key == "arguments" and isinstance(value, str) and not value and target.get("arguments"):
+            continue
+        target[key] = value
+
+
+def _accumulate_openai_responses_event(accumulator, chunk):
+    """Merge one OpenAI Responses API SSE event (`response.*`) into accumulator state."""
+    event_type = chunk.get("type")
+    if not isinstance(event_type, str) or not event_type.startswith("response."):
+        return
+
+    accumulator["received"] = True
+    response_meta = accumulator.setdefault("response", {})
+    accumulator.setdefault("output_items", {})
+    accumulator.setdefault("output_order", [])
+
+    if isinstance(chunk.get("response"), dict):
+        for key, value in chunk["response"].items():
+            if key == "output":
+                if isinstance(value, list) and value:
+                    for idx, item in enumerate(value):
+                        if isinstance(item, dict):
+                            target = _ensure_responses_output_item(accumulator, idx)
+                            _merge_responses_output_item(target, item)
+            elif value is not None or key not in response_meta:
+                response_meta[key] = value
+
+    if event_type in ("response.output_item.added", "response.output_item.done"):
+        item = chunk.get("item")
+        if isinstance(item, dict):
+            target = _ensure_responses_output_item(accumulator, chunk.get("output_index", 0))
+            _merge_responses_output_item(target, item)
+    elif event_type in ("response.content_part.added", "response.content_part.done"):
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "message", "role": "assistant", "content": []},
+        )
+        target.setdefault("type", "message")
+        target.setdefault("role", "assistant")
+        if not isinstance(target.get("content"), list):
+            target["content"] = []
+        slot = _ensure_responses_list_slot(
+            target["content"],
+            chunk.get("content_index", 0),
+            lambda: {"type": "output_text", "text": ""},
+        )
+        part = chunk.get("part")
+        if isinstance(part, dict):
+            for key, value in part.items():
+                if key == "text" and isinstance(value, str) and not value and slot.get("text"):
+                    continue
+                slot[key] = value
+    elif event_type == "response.output_text.delta":
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "message", "role": "assistant", "content": []},
+        )
+        target.setdefault("type", "message")
+        target.setdefault("role", "assistant")
+        if not isinstance(target.get("content"), list):
+            target["content"] = []
+        slot = _ensure_responses_list_slot(
+            target["content"],
+            chunk.get("content_index", 0),
+            lambda: {"type": "output_text", "text": ""},
+        )
+        slot.setdefault("type", "output_text")
+        delta = chunk.get("delta", "")
+        if isinstance(delta, str):
+            slot["text"] = (slot.get("text") or "") + delta
+    elif event_type == "response.output_text.done":
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "message", "role": "assistant", "content": []},
+        )
+        target.setdefault("type", "message")
+        target.setdefault("role", "assistant")
+        if not isinstance(target.get("content"), list):
+            target["content"] = []
+        slot = _ensure_responses_list_slot(
+            target["content"],
+            chunk.get("content_index", 0),
+            lambda: {"type": "output_text", "text": ""},
+        )
+        slot.setdefault("type", "output_text")
+        text = chunk.get("text")
+        if isinstance(text, str):
+            slot["text"] = text
+    elif event_type == "response.function_call_arguments.delta":
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "function_call", "arguments": ""},
+        )
+        target.setdefault("type", "function_call")
+        if chunk.get("item_id") and not target.get("id"):
+            target["id"] = chunk["item_id"]
+        delta = chunk.get("delta", "")
+        if isinstance(delta, str):
+            target["arguments"] = (target.get("arguments") or "") + delta
+    elif event_type == "response.function_call_arguments.done":
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "function_call", "arguments": ""},
+        )
+        target.setdefault("type", "function_call")
+        if chunk.get("item_id") and not target.get("id"):
+            target["id"] = chunk["item_id"]
+        if isinstance(chunk.get("name"), str) and chunk["name"]:
+            target["name"] = chunk["name"]
+        if isinstance(chunk.get("arguments"), str):
+            target["arguments"] = chunk["arguments"]
+    elif event_type in (
+        "response.reasoning_summary_part.added",
+        "response.reasoning_summary_part.done",
+    ):
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "reasoning", "summary": []},
+        )
+        target.setdefault("type", "reasoning")
+        if not isinstance(target.get("summary"), list):
+            target["summary"] = []
+        slot = _ensure_responses_list_slot(
+            target["summary"],
+            chunk.get("summary_index", 0),
+            lambda: {"type": "summary_text", "text": ""},
+        )
+        part = chunk.get("part")
+        if isinstance(part, dict):
+            for key, value in part.items():
+                if key == "text" and isinstance(value, str) and not value and slot.get("text"):
+                    continue
+                slot[key] = value
+    elif event_type == "response.reasoning_summary_text.delta":
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "reasoning", "summary": []},
+        )
+        target.setdefault("type", "reasoning")
+        if not isinstance(target.get("summary"), list):
+            target["summary"] = []
+        slot = _ensure_responses_list_slot(
+            target["summary"],
+            chunk.get("summary_index", 0),
+            lambda: {"type": "summary_text", "text": ""},
+        )
+        slot.setdefault("type", "summary_text")
+        delta = chunk.get("delta", "")
+        if isinstance(delta, str):
+            slot["text"] = (slot.get("text") or "") + delta
+    elif event_type == "response.reasoning_summary_text.done":
+        target = _ensure_responses_output_item(
+            accumulator,
+            chunk.get("output_index", 0),
+            {"type": "reasoning", "summary": []},
+        )
+        target.setdefault("type", "reasoning")
+        if not isinstance(target.get("summary"), list):
+            target["summary"] = []
+        slot = _ensure_responses_list_slot(
+            target["summary"],
+            chunk.get("summary_index", 0),
+            lambda: {"type": "summary_text", "text": ""},
+        )
+        slot.setdefault("type", "summary_text")
+        text = chunk.get("text")
+        if isinstance(text, str):
+            slot["text"] = text
+
+
 def accumulate_sse_event(accumulator, event_lines):
     """Parse one SSE event and merge it into request state.
 
     Auto-detects the protocol from the first parseable JSON payload:
     OpenAI chat-completion chunks (``choices`` list) are merged via the
-    existing OpenAI combiner; AGUI events (``type`` field) are merged
-    via :mod:`capturly.inspection.agui`.  Subsequent events follow the
-    detected protocol.
+    existing OpenAI combiner; OpenAI Responses API events (``response.*``)
+    are merged into a response object; AGUI events (``type`` field) are
+    merged via :mod:`capturly.inspection.agui`.  Subsequent events follow
+    the detected protocol.
     """
     data_lines = []
     for raw_line in event_lines:
@@ -240,6 +452,11 @@ def accumulate_sse_event(accumulator, event_lines):
     if accumulator.get("_protocol") is None:
         if isinstance(chunk.get("choices"), list):
             accumulator["_protocol"] = "openai"
+        elif isinstance(chunk.get("type"), str) and chunk["type"].startswith("response."):
+            accumulator["_protocol"] = "openai_responses"
+            accumulator["response"] = {}
+            accumulator["output_items"] = {}
+            accumulator["output_order"] = []
         elif agui_inspection.is_agui_event(chunk):
             # Switch accumulator to AGUI mode, preserving stream_outcome ref
             outcome = accumulator["stream_outcome"]
@@ -252,6 +469,11 @@ def accumulate_sse_event(accumulator, event_lines):
     # --- AGUI path ---
     if accumulator.get("_protocol") == "agui":
         agui_inspection.accumulate_agui_event(accumulator, chunk)
+        return
+
+    # --- OpenAI Responses API path ---
+    if accumulator.get("_protocol") == "openai_responses":
+        _accumulate_openai_responses_event(accumulator, chunk)
         return
 
     # --- OpenAI path ---
@@ -278,14 +500,26 @@ def accumulate_sse_event(accumulator, event_lines):
 def finalize_sse_chunks(accumulator):
     """Return a combined response body or None without valid chunks.
 
-    Dispatches to the AGUI or OpenAI finalizer based on the detected
-    protocol.  Returns None when no valid events were received.
+    Dispatches to the AGUI, OpenAI Responses, or OpenAI chat-completion
+    finalizer based on the detected protocol.  Returns None when no valid
+    events were received.
     """
     if not accumulator.get("received"):
         return None
 
     if accumulator.get("_protocol") == "agui":
         return agui_inspection.finalize_agui_chunks(accumulator)
+
+    if accumulator.get("_protocol") == "openai_responses":
+        response_body = dict(accumulator.get("response") or {})
+        response_body.setdefault("object", "response")
+        output_order = accumulator.get("output_order") or []
+        output_items = accumulator.get("output_items") or {}
+        if output_order:
+            response_body["output"] = [output_items[i] for i in output_order if i in output_items]
+        else:
+            response_body.setdefault("output", [])
+        return response_body
 
     response_body = dict(accumulator["top_level"])
     response_body["object"] = "chat.completion"
