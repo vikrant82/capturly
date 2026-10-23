@@ -290,8 +290,160 @@ const msgHtml = vm.runInContext(
 assert(msgHtml.includes('Show more'), 'message content is truncated');
 assert(!msgHtml.includes('z'.repeat(2001)), 'message content capped at limit');
 
+// --- Rich AI Meta token stats & Context Window ---
+assert(vm.runInContext(`defaultContextWindow('claude-3-7-sonnet')`, sandbox) === 200000,
+  'claude models default to 200k context window');
+assert(vm.runInContext(`defaultContextWindow('gemini-2.5-pro')`, sandbox) === 1000000,
+  'gemini models default to 1M context window');
+assert(vm.runInContext(`defaultContextWindow('gpt-4.1-mini')`, sandbox) === 400000,
+  'gpt-4.1 models default to 400k context window');
+assert(vm.runInContext(`defaultContextWindow('gpt-4-0613')`, sandbox) === 32000,
+  'legacy gpt-4 defaults to 32k context window');
+assert(vm.runInContext(`defaultContextWindow('gpt-4o')`, sandbox) === 128000,
+  'gpt-4o defaults to 128k context window');
+
+// Bedrock Converse detail from above includes Cached Read (3 / (12 + 3) = 20%) and Context Window (12 + 3 + 5 = 20 used)
+assert(bedrockDetail.includes('Cached Read') && bedrockDetail.includes('3 (20%)'),
+  'Bedrock Cached Read token count and percentage of total input are visible');
+assert(bedrockDetail.includes('20 / 128,000 (0.02%)'),
+  'Bedrock context window includes cached tokens in used count');
+
+const richOpenAIEntry = {
+  method: 'POST', path: '/v1/chat/completions', status_code: 200,
+  timestamp_ms: 5000, duration_ms: 12,
+  request_body_size: 50, response_body_size: 80,
+  ai_insights: {
+    request: { model: 'gpt-4o', message_count: 1, max_tokens: 4096, stream: true },
+    response: {
+      model: 'gpt-4o',
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 500,
+        total_tokens: 1500,
+        cache_read_tokens: 500,
+        cache_write_tokens: 100,
+        thinking_tokens: 125,
+      },
+      finish_reasons: ['stop'],
+    },
+  },
+  request_body: { model: 'gpt-4o', max_completion_tokens: 4096, messages: [{ role: 'user', content: 'hi' }] },
+  response_body: { choices: [{ message: { role: 'assistant', content: 'hello' } }] },
+  request_headers: {}, response_headers: {},
+};
+const richMetaHtml = vm.runInContext('renderAIMeta(' + JSON.stringify(richOpenAIEntry) + ')', sandbox);
+assert(richMetaHtml.includes('<span class="meta-key">Input:</span> <span class="meta-val">1,000</span>'),
+  'Input tokens rendered');
+assert(richMetaHtml.includes('<span class="meta-key">Cached Read:</span> <span class="meta-val">500 (50%)</span>'),
+  'Cached Read tokens with percentage rendered');
+assert(richMetaHtml.includes('<span class="meta-key">Cache Write:</span> <span class="meta-val">100</span>'),
+  'Cache Write tokens rendered');
+assert(richMetaHtml.includes('<span class="meta-key">Thinking:</span> <span class="meta-val">125 (25%)</span>'),
+  'Thinking tokens with percentage rendered');
+assert(richMetaHtml.includes('<span class="meta-key">Output:</span> <span class="meta-val">500</span>'),
+  'Output tokens rendered');
+assert(richMetaHtml.includes('<span class="meta-key">Max Output:</span> <span class="meta-val">4,096</span>'),
+  'Max Output tokens rendered');
+assert(richMetaHtml.includes('1,500 / 128,000 (1.2%)'),
+  'Context Window usage text rendered with 128k default for gpt-4o');
+assert(richMetaHtml.includes('id="ctx-window-select"') && richMetaHtml.includes('id="ctx-window-custom"'),
+  'Context Window interactive preset select and custom input rendered');
+
+// Interactive context window updates and localStorage persistence per model
+vm.runInContext(`
+  var _store = {};
+  localStorage = {
+    getItem: function(k) { return Object.prototype.hasOwnProperty.call(_store, k) ? _store[k] : null; },
+    setItem: function(k, v) { _store[k] = String(v); },
+    removeItem: function(k) { delete _store[k]; },
+  };
+  var _els = {
+    'ctx-window-usage': {
+      textContent: '',
+      attrs: { 'data-used-tokens': '1500', 'data-model-key': 'gpt-4o', 'data-default-limit': '128000' },
+      getAttribute: function(name) { return this.attrs[name]; },
+    },
+    'ctx-window-bar': { style: { width: '', background: '' } },
+    'ctx-window-select': {
+      value: '200000',
+      getAttribute: function(name) { return name === 'data-model-key' ? 'gpt-4o' : null; },
+    },
+    'ctx-window-custom': {
+      value: '128000',
+      getAttribute: function(name) { return name === 'data-model-key' ? 'gpt-4o' : null; },
+    },
+  };
+  document.getElementById = function(id) { return _els[id] || null; };
+  onContextWindowSelectChange(_els['ctx-window-select']);
+`, sandbox);
+assert(vm.runInContext(`_els['ctx-window-usage'].textContent`, sandbox) === '1,500 / 200,000 (0.75%)',
+  'Selecting 200k preset updates Context Window usage text in DOM');
+assert(vm.runInContext(`_els['ctx-window-custom'].value`, sandbox) === '200000',
+  'Selecting 200k preset syncs custom input value');
+assert(vm.runInContext(`localStorage.getItem('capturly_ctx_window:gpt-4o')`, sandbox) === '200000',
+  'Selecting preset persists context window for model in localStorage');
+
+vm.runInContext(`
+  _els['ctx-window-custom'].value = '50000';
+  onContextWindowCustomInput(_els['ctx-window-custom']);
+`, sandbox);
+assert(vm.runInContext(`_els['ctx-window-usage'].textContent`, sandbox) === '1,500 / 50,000 (3%)',
+  'Custom context window input updates usage text in DOM');
+assert(vm.runInContext(`_els['ctx-window-select'].value`, sandbox) === 'custom',
+  'Non-preset custom value switches select to custom option');
+assert(vm.runInContext(`getContextWindowConfig('gpt-4o').limit`, sandbox) === 50000,
+  'getContextWindowConfig reads persisted custom limit for gpt-4o');
+assert(vm.runInContext(`getContextWindowConfig('claude-3-7-sonnet').limit`, sandbox) === 200000,
+  'Other models keep their own default context window');
+
+// --- HTML attribute escaping for data-model-key ---
+const quoteModelHtml = vm.runInContext(
+  `renderContextWindowMetaItem('gpt-4o" onclick="alert(1)', 500)`, sandbox);
+assert(quoteModelHtml.includes('data-model-key="gpt-4o&quot; onclick=&quot;alert(1)"'),
+  'double quotes in model name are escaped as &quot; in data-model-key attributes');
+assert(!quoteModelHtml.includes('data-model-key="gpt-4o" onclick="alert(1)"'),
+  'unquoted attribute injection is prevented in data-model-key');
+
+// --- Empty usage: {} handling & fallback to response_body.usage ---
+const emptyUsageEntry = {
+  method: 'POST', path: '/model/claude-3-7-sonnet/converse', status_code: 200,
+  ai_insights: {
+    protocol: 'bedrock_converse',
+    request: { model: 'claude-3-7-sonnet', max_tokens: 2048 },
+    response: { model: 'claude-3-7-sonnet', usage: {}, finish_reasons: ['end_turn'] },
+  },
+  request_body: { modelId: 'claude-3-7-sonnet' },
+  response_body: { output: { message: { role: 'assistant', content: [{ text: 'hi' }] } } },
+};
+const emptyUsageHtml = vm.runInContext(
+  'renderAIMeta(' + JSON.stringify(emptyUsageEntry) + ')', sandbox);
+assert(!emptyUsageHtml.includes('Tokens:') && !emptyUsageHtml.includes('Context Window:'),
+  'empty usage: {} without response_body usage omits fabricated zero token stats');
+assert(emptyUsageHtml.includes('<span class="meta-key">Max Output:</span> <span class="meta-val">2,048</span>'),
+  'Max Output still renders when usage is empty');
+
+const fallbackUsageEntry = {
+  method: 'POST', path: '/model/claude-3-7-sonnet/converse', status_code: 200,
+  ai_insights: {
+    protocol: 'bedrock_converse',
+    request: { model: 'claude-3-7-sonnet' },
+    response: { model: 'claude-3-7-sonnet', usage: {}, finish_reasons: ['end_turn'] },
+  },
+  request_body: { modelId: 'claude-3-7-sonnet' },
+  response_body: {
+    output: { message: { role: 'assistant', content: [{ text: 'hi' }] } },
+    usage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 },
+  },
+};
+const fallbackUsageHtml = vm.runInContext(
+  'renderAIMeta(' + JSON.stringify(fallbackUsageEntry) + ')', sandbox);
+assert(fallbackUsageHtml.includes('80 prompt + 20 completion = 100 total'),
+  'empty ai_insights.response.usage falls back to valid response_body.usage');
+
 if (failures > 0) {
   console.error(failures + ' assertion(s) failed');
   process.exit(1);
 }
 console.log('SMOKE OK');
+
+

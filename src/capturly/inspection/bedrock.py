@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Optional, Union
+from typing import Any, Optional, Union
 from urllib.parse import unquote, urlsplit
 
 _CONVERSE_SUFFIX = re.compile(r"/converse(?P<stream>-stream)?/?$", re.IGNORECASE)
@@ -141,7 +141,7 @@ def _request_insights(path: str, request: dict) -> dict:
         model = unquote(path_info.group(1)).strip("/") if path_info else None
     endpoint_info = _CONVERSE_SUFFIX.search(_path_parts(path))
     stream = bool(endpoint_info and endpoint_info.group("stream"))
-    return {
+    result_insights = {
         "model": model,
         "message_count": len(messages),
         "roles": roles,
@@ -151,6 +151,61 @@ def _request_insights(path: str, request: dict) -> dict:
         "tool_names": tool_names,
         "tool_count": len(tools) if isinstance(tools, list) else 0,
     }
+    inference_config = request.get("inferenceConfig")
+    if isinstance(inference_config, dict):
+        max_tokens = inference_config.get("maxTokens")
+        if _is_int(max_tokens):
+            result_insights["max_tokens"] = max_tokens
+    return result_insights
+
+
+_CACHE_READ_CANDIDATES = (
+    "cache_read_tokens",
+    "cached_tokens",
+    "cacheReadInputTokens",
+    "cache_read_input_tokens",
+    ("prompt_tokens_details", "cached_tokens"),
+    ("input_tokens_details", "cached_tokens"),
+    "prompt_cache_hit_tokens",
+)
+
+_CACHE_WRITE_CANDIDATES = (
+    "cache_write_tokens",
+    "cacheWriteInputTokens",
+    "cache_creation_input_tokens",
+    ("prompt_tokens_details", "cache_creation_tokens"),
+    ("prompt_tokens_details", "cache_write_tokens"),
+)
+
+_THINKING_CANDIDATES = (
+    "thinking_tokens",
+    "reasoning_tokens",
+    "thinkingTokens",
+    "reasoningTokens",
+    ("completion_tokens_details", "reasoning_tokens"),
+    ("output_tokens_details", "reasoning_tokens"),
+)
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _first_int(data: dict, candidates: tuple) -> Optional[int]:
+    for candidate in candidates:
+        if isinstance(candidate, tuple):
+            cur: Any = data
+            for key in candidate:
+                if not isinstance(cur, dict):
+                    cur = None
+                    break
+                cur = cur.get(key)
+            val = cur
+        else:
+            val = data.get(candidate)
+        if _is_int(val):
+            return int(val)
+    return None
 
 
 def _response_insights(response: dict) -> Optional[dict]:
@@ -182,8 +237,28 @@ def _response_insights(response: dict) -> Optional[dict]:
     }
     for source, target in token_mapping.items():
         value = mapped_usage.get(source)
-        if isinstance(value, int) and not isinstance(value, bool):
+        if _is_int(value):
             mapped_usage[target] = value
+
+    if not _is_int(mapped_usage.get("total_tokens")):
+        if _is_int(mapped_usage.get("prompt_tokens")) and _is_int(
+            mapped_usage.get("completion_tokens")
+        ):
+            mapped_usage["total_tokens"] = (
+                mapped_usage["prompt_tokens"] + mapped_usage["completion_tokens"]
+            )
+
+    cache_read = _first_int(mapped_usage, _CACHE_READ_CANDIDATES)
+    if cache_read is not None:
+        mapped_usage["cache_read_tokens"] = cache_read
+
+    cache_write = _first_int(mapped_usage, _CACHE_WRITE_CANDIDATES)
+    if cache_write is not None:
+        mapped_usage["cache_write_tokens"] = cache_write
+
+    thinking = _first_int(mapped_usage, _THINKING_CANDIDATES)
+    if thinking is not None:
+        mapped_usage["thinking_tokens"] = thinking
 
     result = {
         "model": response.get("modelId"),

@@ -81,10 +81,15 @@
   .detail-body { padding: 12px 14px; }
   .detail-body h4 { font-size: 12px; color: #8b949e; text-transform: uppercase; margin: 12px 0 6px 0; }
   .detail-body h4:first-child { margin-top: 0; }
-  .ai-meta { display: flex; gap: 20px; flex-wrap: wrap; padding: 12px 0; margin-bottom: 12px; border-bottom: 1px solid #30363d; }
-  .ai-meta .meta-item { font-size: 12px; }
+  .ai-meta { display: flex; gap: 12px 20px; flex-wrap: wrap; align-items: center; padding: 12px 0; margin-bottom: 12px; border-bottom: 1px solid #30363d; }
+  .ai-meta .meta-item { font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
   .ai-meta .meta-key { color: #8b949e; margin-right: 4px; }
   .ai-meta .meta-val { color: #c9d1d9; font-weight: 600; }
+  .ctx-select, .ctx-input { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 2px 6px; border-radius: 4px; font-size: 11px; outline: none; margin-left: 4px; }
+  .ctx-select:focus, .ctx-input:focus { border-color: #58a6ff; }
+  .ctx-input { width: 84px; }
+  .ctx-bar { display: inline-block; width: 56px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; margin-left: 4px; vertical-align: middle; }
+  .ctx-bar-fill { display: block; height: 100%; background: #3fb950; transition: width 0.15s; }
   .msg { margin-bottom: 10px; border-left: 3px solid #30363d; padding: 8px 12px; background: #0d1117; border-radius: 0 6px 6px 0; }
   .msg.system { border-left-color: #d29922; }
   .msg.user { border-left-color: #58a6ff; }
@@ -222,6 +227,10 @@ function revealMore(btn) {
 function esc(s) {
   if (s == null) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escAttr(s) {
+  return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function escJson(obj) {
@@ -526,6 +535,273 @@ function renderOverview(e) {
   return '<div class="detail-section"><h3>Overview</h3><pre>' + esc(lines) + '</pre></div>';
 }
 
+var CTX_STORAGE_PREFIX = 'capturly_ctx_window:';
+var CTX_PRESETS = [32000, 64000, 128000, 200000, 400000, 1000000, 2000000];
+
+function storageGet(key) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
+      return localStorage.getItem(key);
+    }
+  } catch (e) {}
+  return null;
+}
+
+function storageSet(key, val) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+      localStorage.setItem(key, String(val));
+    }
+  } catch (e) {}
+}
+
+function storageRemove(key) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.removeItem === 'function') {
+      localStorage.removeItem(key);
+    }
+  } catch (e) {}
+}
+
+function defaultContextWindow(model) {
+  var m = String(model || '').toLowerCase();
+  if (!m || m === '-') return 128000;
+  if (m.indexOf('gemini') !== -1) return 1000000;
+  if (m.indexOf('claude') !== -1 || m.indexOf('anthropic') !== -1) return 200000;
+  if (m.indexOf('gpt-4.1') !== -1 || m.indexOf('gpt-5') !== -1) return 400000;
+  if (m.indexOf('gpt-4o') !== -1 || m.indexOf('gpt-4-turbo') !== -1 || m.indexOf('o1') !== -1
+    || m.indexOf('o3') !== -1 || m.indexOf('o4') !== -1 || m.indexOf('deepseek') !== -1
+    || m.indexOf('llama-3') !== -1 || m.indexOf('mistral') !== -1 || m.indexOf('qwen') !== -1) {
+    return 128000;
+  }
+  if (m.indexOf('gpt-4') !== -1) return 32000;
+  return 128000;
+}
+
+function fmtCompactTokens(n) {
+  if (n >= 1000000 && n % 1000000 === 0) return (n / 1000000) + 'M';
+  if (n >= 1000 && n % 1000 === 0) return (n / 1000) + 'k';
+  return Number(n).toLocaleString();
+}
+
+function getContextWindowConfig(model) {
+  var modelKey = (model && model !== '-') ? String(model) : 'default';
+  var defaultLimit = defaultContextWindow(model);
+  var raw = storageGet(CTX_STORAGE_PREFIX + modelKey);
+  if (!raw || raw === 'auto') {
+    return { mode: 'auto', preset: 'auto', limit: defaultLimit, defaultLimit: defaultLimit, modelKey: modelKey };
+  }
+  var parsed = parseInt(raw, 10);
+  if (!isFinite(parsed) || parsed <= 0) {
+    return { mode: 'auto', preset: 'auto', limit: defaultLimit, defaultLimit: defaultLimit, modelKey: modelKey };
+  }
+  var isPreset = CTX_PRESETS.indexOf(parsed) !== -1;
+  return {
+    mode: isPreset ? 'preset' : 'custom',
+    preset: isPreset ? String(parsed) : 'custom',
+    limit: parsed,
+    defaultLimit: defaultLimit,
+    modelKey: modelKey,
+  };
+}
+
+function setContextWindowForModel(model, val) {
+  var modelKey = (model && model !== '-') ? String(model) : 'default';
+  if (!val || val === 'auto') {
+    storageRemove(CTX_STORAGE_PREFIX + modelKey);
+  } else {
+    var n = parseInt(val, 10);
+    if (isFinite(n) && n > 0) storageSet(CTX_STORAGE_PREFIX + modelKey, String(n));
+  }
+  return getContextWindowConfig(model);
+}
+
+function firstFiniteInt(values) {
+  for (var i = 0; i < values.length; i++) {
+    var v = values[i];
+    if (typeof v === 'number' && isFinite(v)) return Math.trunc(v);
+  }
+  return null;
+}
+
+function extractUsageStats(u) {
+  if (!u || typeof u !== 'object' || Array.isArray(u)) return null;
+  var pDetails = (u.prompt_tokens_details && typeof u.prompt_tokens_details === 'object') ? u.prompt_tokens_details : {};
+  var iDetails = (u.input_tokens_details && typeof u.input_tokens_details === 'object') ? u.input_tokens_details : {};
+  var cDetails = (u.completion_tokens_details && typeof u.completion_tokens_details === 'object') ? u.completion_tokens_details : {};
+  var oDetails = (u.output_tokens_details && typeof u.output_tokens_details === 'object') ? u.output_tokens_details : {};
+
+  var rawPrompt = firstFiniteInt([u.prompt_tokens, u.input_tokens, u.inputTokens]);
+  var rawCompletion = firstFiniteInt([u.completion_tokens, u.output_tokens, u.outputTokens]);
+  var rawTotal = firstFiniteInt([u.total_tokens, u.totalTokens]);
+
+  var cacheReadTokens = firstFiniteInt([
+    u.cache_read_tokens,
+    u.cached_tokens,
+    pDetails.cached_tokens,
+    iDetails.cached_tokens,
+    u.cacheReadInputTokens,
+    u.cache_read_input_tokens,
+    u.prompt_cache_hit_tokens,
+  ]);
+  var cacheWriteTokens = firstFiniteInt([
+    u.cache_write_tokens,
+    u.cacheWriteInputTokens,
+    u.cache_creation_input_tokens,
+    pDetails.cache_creation_tokens,
+    pDetails.cache_write_tokens,
+    iDetails.cache_creation_tokens,
+    iDetails.cache_write_tokens,
+  ]);
+  var thinkingTokens = firstFiniteInt([
+    u.thinking_tokens,
+    u.reasoning_tokens,
+    cDetails.reasoning_tokens,
+    oDetails.reasoning_tokens,
+    u.thinkingTokens,
+    u.reasoningTokens,
+  ]);
+  if (
+    rawPrompt == null
+    && rawCompletion == null
+    && rawTotal == null
+    && cacheReadTokens == null
+    && cacheWriteTokens == null
+    && thinkingTokens == null
+  ) {
+    return null;
+  }
+  var promptTokens = rawPrompt != null ? rawPrompt : 0;
+  var completionTokens = rawCompletion != null ? rawCompletion : 0;
+  var totalTokens = rawTotal != null ? rawTotal : (promptTokens + completionTokens);
+  return {
+    promptTokens: promptTokens,
+    completionTokens: completionTokens,
+    totalTokens: totalTokens,
+    cacheReadTokens: cacheReadTokens,
+    cacheWriteTokens: cacheWriteTokens,
+    thinkingTokens: thinkingTokens,
+  };
+}
+
+function extractMaxTokens(aiReq, req) {
+  var inf = (req && req.inferenceConfig && typeof req.inferenceConfig === 'object') ? req.inferenceConfig : {};
+  return firstFiniteInt([
+    aiReq && aiReq.max_tokens,
+    req && req.max_completion_tokens,
+    req && req.max_tokens,
+    inf.maxTokens,
+    req && req.maxTokens,
+  ]);
+}
+
+function computeContextUsedTokens(stats, protocol) {
+  if (!stats) return 0;
+  var p = stats.promptTokens || 0;
+  var c = stats.completionTokens || 0;
+  var t = stats.totalTokens != null ? stats.totalTokens : (p + c);
+  if (protocol === 'bedrock_converse' && t === p + c) {
+    return p + (stats.cacheReadTokens || 0) + (stats.cacheWriteTokens || 0) + c;
+  }
+  return t || (p + c);
+}
+
+function formatContextUsageText(usedTokens, limitTokens) {
+  if (!limitTokens || limitTokens <= 0) return usedTokens.toLocaleString() + ' / -';
+  var rawPct = (usedTokens / limitTokens) * 100;
+  var pctStr;
+  if (usedTokens <= 0) pctStr = '0%';
+  else if (rawPct < 1) pctStr = Math.max(0.01, rawPct).toFixed(2) + '%';
+  else pctStr = Number(rawPct.toFixed(1)) + '%';
+  return usedTokens.toLocaleString() + ' / ' + limitTokens.toLocaleString() + ' (' + pctStr + ')';
+}
+
+function ctxBarColor(usedTokens, limitTokens) {
+  if (!limitTokens || limitTokens <= 0) return '#3fb950';
+  var ratio = usedTokens / limitTokens;
+  if (ratio >= 0.85) return '#f85149';
+  if (ratio >= 0.6) return '#d29922';
+  return '#3fb950';
+}
+
+function updateContextWindowDOM(limitTokens) {
+  var usageEl = document.getElementById('ctx-window-usage');
+  if (!usageEl) return;
+  var used = parseInt((usageEl.getAttribute && usageEl.getAttribute('data-used-tokens')) || '0', 10) || 0;
+  usageEl.textContent = formatContextUsageText(used, limitTokens);
+  var barEl = document.getElementById('ctx-window-bar');
+  if (barEl && barEl.style) {
+    var pct = limitTokens > 0 ? Math.min(100, Math.max(0, (used / limitTokens) * 100)) : 0;
+    barEl.style.width = pct.toFixed(2) + '%';
+    barEl.style.background = ctxBarColor(used, limitTokens);
+  }
+}
+
+function onContextWindowSelectChange(sel) {
+  var usageEl = document.getElementById('ctx-window-usage');
+  var modelKey = (sel && sel.getAttribute && sel.getAttribute('data-model-key'))
+    || (usageEl && usageEl.getAttribute && usageEl.getAttribute('data-model-key')) || 'default';
+  var defaultLimit = parseInt((usageEl && usageEl.getAttribute && usageEl.getAttribute('data-default-limit')) || '0', 10)
+    || defaultContextWindow(modelKey);
+  var customInput = document.getElementById('ctx-window-custom');
+  var val = sel ? sel.value : 'auto';
+  if (val === 'auto') {
+    storageRemove(CTX_STORAGE_PREFIX + modelKey);
+    if (customInput) customInput.value = String(defaultLimit);
+    updateContextWindowDOM(defaultLimit);
+  } else if (val === 'custom') {
+    var customVal = customInput ? parseInt(customInput.value, 10) : defaultLimit;
+    if (!isFinite(customVal) || customVal <= 0) customVal = defaultLimit;
+    storageSet(CTX_STORAGE_PREFIX + modelKey, String(customVal));
+    updateContextWindowDOM(customVal);
+  } else {
+    var presetVal = parseInt(val, 10) || defaultLimit;
+    storageSet(CTX_STORAGE_PREFIX + modelKey, String(presetVal));
+    if (customInput) customInput.value = String(presetVal);
+    updateContextWindowDOM(presetVal);
+  }
+}
+
+function onContextWindowCustomInput(inp) {
+  var usageEl = document.getElementById('ctx-window-usage');
+  var modelKey = (inp && inp.getAttribute && inp.getAttribute('data-model-key'))
+    || (usageEl && usageEl.getAttribute && usageEl.getAttribute('data-model-key')) || 'default';
+  var val = inp ? parseInt(inp.value, 10) : 0;
+  if (!isFinite(val) || val <= 0) return;
+  storageSet(CTX_STORAGE_PREFIX + modelKey, String(val));
+  var sel = document.getElementById('ctx-window-select');
+  if (sel) sel.value = CTX_PRESETS.indexOf(val) !== -1 ? String(val) : 'custom';
+  updateContextWindowDOM(val);
+}
+
+function renderContextWindowMetaItem(modelName, usedTokens) {
+  var cfg = getContextWindowConfig(modelName);
+  var pct = cfg.limit > 0 ? Math.min(100, Math.max(0, (usedTokens / cfg.limit) * 100)) : 0;
+  var html = '<span class="meta-item ctx-window-item"><span class="meta-key">Context Window:</span> '
+    + '<span class="meta-val" id="ctx-window-usage" data-used-tokens="' + usedTokens
+    + '" data-model-key="' + escAttr(cfg.modelKey) + '" data-default-limit="' + cfg.defaultLimit + '">'
+    + esc(formatContextUsageText(usedTokens, cfg.limit)) + '</span>'
+    + '<span class="ctx-bar"><span class="ctx-bar-fill" id="ctx-window-bar" style="width:'
+    + pct.toFixed(2) + '%;background:' + ctxBarColor(usedTokens, cfg.limit) + '"></span></span>'
+    + '<select id="ctx-window-select" class="ctx-select" data-model-key="' + escAttr(cfg.modelKey)
+    + '" onchange="onContextWindowSelectChange(this)">'
+    + '<option value="auto"' + (cfg.preset === 'auto' ? ' selected' : '') + '>Auto (' + fmtCompactTokens(cfg.defaultLimit) + ')</option>'
+    + '<option value="32000"' + (cfg.preset === '32000' ? ' selected' : '') + '>32k</option>'
+    + '<option value="64000"' + (cfg.preset === '64000' ? ' selected' : '') + '>64k</option>'
+    + '<option value="128000"' + (cfg.preset === '128000' ? ' selected' : '') + '>128k</option>'
+    + '<option value="200000"' + (cfg.preset === '200000' ? ' selected' : '') + '>200k</option>'
+    + '<option value="400000"' + (cfg.preset === '400000' ? ' selected' : '') + '>400k</option>'
+    + '<option value="1000000"' + (cfg.preset === '1000000' ? ' selected' : '') + '>1M</option>'
+    + '<option value="2000000"' + (cfg.preset === '2000000' ? ' selected' : '') + '>2M</option>'
+    + '<option value="custom"' + (cfg.preset === 'custom' ? ' selected' : '') + '>Custom...</option>'
+    + '</select>'
+    + '<input type="number" id="ctx-window-custom" class="ctx-input" min="1" step="1000" value="'
+    + cfg.limit + '" data-model-key="' + escAttr(cfg.modelKey)
+    + '" title="Custom context window tokens" oninput="onContextWindowCustomInput(this)" onchange="onContextWindowCustomInput(this)">'
+    + '</span>';
+  return html;
+}
+
 function renderAIMeta(e) {
   var ai = e.ai_insights || {};
   var aiReq = ai.request || {};
@@ -533,12 +809,40 @@ function renderAIMeta(e) {
   var req = (e.request_body && typeof e.request_body === 'object') ? e.request_body : {};
   var res = ai.protocol === 'bedrock_converse' ? bedrockResponseBody(e)
     : ((e.response_body && typeof e.response_body === 'object') ? e.response_body : {});
+  var modelName = aiReq.model || req.model || req.modelId || aiRes.model || res.model || res.modelId || '-';
   var html = '<div class="ai-meta">';
   if (ai.protocol === 'bedrock_converse') html += metaItem('Protocol', 'Bedrock Converse');
-  html += metaItem('Model', aiReq.model || req.model || req.modelId || '-');
-  if (aiRes.usage) {
-    var u = aiRes.usage;
-    html += metaItem('Tokens', (u.prompt_tokens||0) + ' prompt + ' + (u.completion_tokens||0) + ' completion = ' + (u.total_tokens||0) + ' total');
+  html += metaItem('Model', modelName);
+  var stats = extractUsageStats(aiRes.usage) || extractUsageStats(res.usage);
+  var maxTokens = extractMaxTokens(aiReq, req);
+  if (stats) {
+    html += metaItem('Tokens', stats.promptTokens + ' prompt + ' + stats.completionTokens + ' completion = ' + stats.totalTokens + ' total');
+    html += metaItem('Input', stats.promptTokens.toLocaleString());
+    if (stats.cacheReadTokens != null) {
+      var inputDenom = (ai.protocol === 'bedrock_converse' || stats.cacheReadTokens > stats.promptTokens)
+        ? (stats.promptTokens + stats.cacheReadTokens + (stats.cacheWriteTokens || 0))
+        : stats.promptTokens;
+      var readPct = inputDenom > 0 ? ' (' + Math.round((stats.cacheReadTokens / inputDenom) * 100) + '%)' : '';
+      html += metaItem('Cached Read', stats.cacheReadTokens.toLocaleString() + readPct);
+    }
+    if (stats.cacheWriteTokens != null) {
+      html += metaItem('Cache Write', stats.cacheWriteTokens.toLocaleString());
+    }
+    if (stats.thinkingTokens != null) {
+      var outDenom = stats.thinkingTokens > stats.completionTokens
+        ? (stats.completionTokens + stats.thinkingTokens)
+        : stats.completionTokens;
+      var thinkPct = outDenom > 0 ? ' (' + Math.round((stats.thinkingTokens / outDenom) * 100) + '%)' : '';
+      html += metaItem('Thinking', stats.thinkingTokens.toLocaleString() + thinkPct);
+    }
+    html += metaItem('Output', stats.completionTokens.toLocaleString());
+    if (maxTokens != null) {
+      html += metaItem('Max Output', maxTokens.toLocaleString());
+    }
+    var usedTokens = computeContextUsedTokens(stats, ai.protocol);
+    html += renderContextWindowMetaItem(modelName, usedTokens);
+  } else if (maxTokens != null) {
+    html += metaItem('Max Output', maxTokens.toLocaleString());
   }
   if (aiRes.finish_reasons && aiRes.finish_reasons.length) {
     html += metaItem('Finish', aiRes.finish_reasons.join(', '));

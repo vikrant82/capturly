@@ -327,3 +327,71 @@ def test_openai_dispatch_fallback_keeps_existing_insight_shape():
             "assistant_content": ["Hello"],
         },
     }
+
+
+def test_bedrock_extracts_inference_config_max_tokens_and_normalizes_rich_usage():
+    request = {
+        "modelId": "anthropic.claude-3-7-sonnet",
+        "inferenceConfig": {"maxTokens": 4096, "temperature": 0.2},
+        "messages": [{"role": "user", "content": [{"text": "Explain caching"}]}],
+    }
+    response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [{"text": "Prompt caching reuses prefixes."}],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {
+            "inputTokens": 500,
+            "outputTokens": 150,
+            "cacheReadInputTokens": 1200,
+            "cacheWriteInputTokens": 300,
+            "thinkingTokens": 80,
+        },
+    }
+
+    insights = build_ai_insights(
+        "/model/anthropic.claude-3-7-sonnet/converse",
+        _bytes(request),
+        _bytes(response),
+    )
+
+    assert insights is not None
+    assert insights["request"]["max_tokens"] == 4096
+    usage = insights["response"]["usage"]
+    assert usage["prompt_tokens"] == 500
+    assert usage["completion_tokens"] == 150
+    assert usage["total_tokens"] == 650
+    assert usage["cache_read_tokens"] == 1200
+    assert usage["cache_write_tokens"] == 300
+    assert usage["thinking_tokens"] == 80
+
+
+def test_bedrock_ignores_boolean_max_tokens_and_boolean_usage_counts():
+    request = {
+        "modelId": "anthropic.claude-3-7-sonnet",
+        "inferenceConfig": {"maxTokens": True},
+        "messages": [{"role": "user", "content": [{"text": "Hi"}]}],
+    }
+    response = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "Hello"}]}},
+        "stopReason": "end_turn",
+        "usage": {
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "totalTokens": 15,
+            "cacheReadInputTokens": False,
+        },
+    }
+
+    insights = build_ai_insights(
+        "/model/anthropic.claude-3-7-sonnet/converse",
+        _bytes(request),
+        _bytes(response),
+    )
+
+    assert insights is not None
+    assert "max_tokens" not in insights["request"]
+    assert "cache_read_tokens" not in insights["response"]["usage"]
