@@ -1,9 +1,100 @@
 """OpenAI protocol detection and extraction."""
 
 import json
-from typing import Optional
+from typing import Any, Optional
 
 _OPENAI_ENDPOINTS = ("/v1/chat/completions", "/v1/completions")
+
+_CACHE_READ_CANDIDATES = (
+    "cache_read_tokens",
+    "cached_tokens",
+    ("prompt_tokens_details", "cached_tokens"),
+    ("input_tokens_details", "cached_tokens"),
+    "cacheReadInputTokens",
+    "cache_read_input_tokens",
+    "prompt_cache_hit_tokens",
+)
+
+_CACHE_WRITE_CANDIDATES = (
+    "cache_write_tokens",
+    "cacheWriteInputTokens",
+    "cache_creation_input_tokens",
+    ("prompt_tokens_details", "cache_creation_tokens"),
+    ("prompt_tokens_details", "cache_write_tokens"),
+    ("input_tokens_details", "cache_creation_tokens"),
+    ("input_tokens_details", "cache_write_tokens"),
+)
+
+_THINKING_CANDIDATES = (
+    "thinking_tokens",
+    "reasoning_tokens",
+    ("completion_tokens_details", "reasoning_tokens"),
+    ("output_tokens_details", "reasoning_tokens"),
+    "thinkingTokens",
+    "reasoningTokens",
+)
+
+
+def _is_int(value: Any) -> bool:
+    """Return True when value is a non-boolean integer."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _first_int(data: dict, candidates: tuple) -> Optional[int]:
+    """Return the first non-boolean integer found across top-level or nested keys."""
+    for candidate in candidates:
+        if isinstance(candidate, tuple):
+            cur: Any = data
+            for key in candidate:
+                if not isinstance(cur, dict):
+                    cur = None
+                    break
+                cur = cur.get(key)
+            val = cur
+        else:
+            val = data.get(candidate)
+        if _is_int(val):
+            return int(val)
+    return None
+
+
+def _normalize_usage(usage: Any) -> Optional[dict]:
+    """Preserve raw usage keys and populate normalized token counts when present."""
+    if not isinstance(usage, dict):
+        return None
+
+    normalized = dict(usage)
+    if not _is_int(normalized.get("prompt_tokens")):
+        input_tokens = _first_int(normalized, ("input_tokens", "inputTokens"))
+        if input_tokens is not None:
+            normalized["prompt_tokens"] = input_tokens
+
+    if not _is_int(normalized.get("completion_tokens")):
+        output_tokens = _first_int(normalized, ("output_tokens", "outputTokens"))
+        if output_tokens is not None:
+            normalized["completion_tokens"] = output_tokens
+
+    if not _is_int(normalized.get("total_tokens")):
+        if _is_int(normalized.get("prompt_tokens")) and _is_int(
+            normalized.get("completion_tokens")
+        ):
+            normalized["total_tokens"] = (
+                normalized["prompt_tokens"] + normalized["completion_tokens"]
+            )
+
+    cache_read = _first_int(normalized, _CACHE_READ_CANDIDATES)
+    if cache_read is not None:
+        normalized["cache_read_tokens"] = cache_read
+
+    cache_write = _first_int(normalized, _CACHE_WRITE_CANDIDATES)
+    if cache_write is not None:
+        normalized["cache_write_tokens"] = cache_write
+
+    thinking = _first_int(normalized, _THINKING_CANDIDATES)
+    if thinking is not None:
+        normalized["thinking_tokens"] = thinking
+
+    return normalized
 
 
 def _is_openai_endpoint(path: str) -> bool:
@@ -70,6 +161,10 @@ def extract_request_insights(path: str, request_body: bytes) -> Optional[dict]:
         "system_prompts": system_prompts,
         "stream": request.get("stream", False),
     }
+
+    max_tokens = _first_int(request, ("max_completion_tokens", "max_tokens"))
+    if max_tokens is not None:
+        insights["max_tokens"] = max_tokens
 
     tools = request.get("tools")
     if isinstance(tools, list) and tools:
@@ -144,7 +239,7 @@ def extract_response_insights(path: str, response_body: bytes) -> Optional[dict]
 
     insights = {
         "model": response.get("model"),
-        "usage": response.get("usage"),
+        "usage": _normalize_usage(response.get("usage")),
         "finish_reasons": finish_reasons,
         "assistant_content": assistant_content,
     }
@@ -187,7 +282,7 @@ def detect_openai_protocol(path: str, response_body: bytes) -> Optional[dict]:
         "type": "chat_completion" if obj_type == "chat.completion" else "completion",
         "model": response.get("model"),
         "id": response.get("id"),
-        "usage": response.get("usage"),
+        "usage": _normalize_usage(response.get("usage")),
     }
 
 

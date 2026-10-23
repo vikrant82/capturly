@@ -303,3 +303,126 @@ def test_extract_response_insights_no_choices():
     response_body = json.dumps({"id": "x", "object": "chat.completion"}).encode()
     result = openai.extract_response_insights("/v1/chat/completions", response_body)
     assert result is None
+
+
+def test_extract_request_insights_max_tokens():
+    """Extract max_tokens from standard chat completion request."""
+    request_body = json.dumps(
+        {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 4096,
+        }
+    ).encode()
+
+    result = openai.extract_request_insights("/v1/chat/completions", request_body)
+
+    assert result is not None
+    assert result["max_tokens"] == 4096
+
+
+def test_extract_request_insights_max_completion_tokens_and_bool_rejection():
+    """Prefer max_completion_tokens over max_tokens and reject boolean values."""
+    request_body = json.dumps(
+        {
+            "model": "o3-mini",
+            "messages": [{"role": "user", "content": "Solve this"}],
+            "max_completion_tokens": 8192,
+            "max_tokens": 2048,
+        }
+    ).encode()
+
+    result = openai.extract_request_insights("/v1/chat/completions", request_body)
+    assert result is not None
+    assert result["max_tokens"] == 8192
+
+    bool_body = json.dumps(
+        {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": True,
+        }
+    ).encode()
+    bool_result = openai.extract_request_insights("/v1/chat/completions", bool_body)
+    assert bool_result is not None
+    assert "max_tokens" not in bool_result
+
+
+def test_extract_response_insights_normalizes_cached_and_reasoning_tokens():
+    """Normalize nested OpenAI prompt_tokens_details and completion_tokens_details."""
+    response_body = json.dumps(
+        {
+            "id": "chatcmpl-rich",
+            "object": "chat.completion",
+            "model": "o3-mini",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Done."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 400,
+                "total_tokens": 1400,
+                "prompt_tokens_details": {
+                    "cached_tokens": 750,
+                    "cache_creation_tokens": 100,
+                },
+                "completion_tokens_details": {
+                    "reasoning_tokens": 250,
+                },
+            },
+        }
+    ).encode()
+
+    result = openai.extract_response_insights("/v1/chat/completions", response_body)
+
+    assert result is not None
+    usage = result["usage"]
+    assert usage["prompt_tokens"] == 1000
+    assert usage["completion_tokens"] == 400
+    assert usage["total_tokens"] == 1400
+    assert usage["cache_read_tokens"] == 750
+    assert usage["cache_write_tokens"] == 100
+    assert usage["thinking_tokens"] == 250
+    assert usage["prompt_tokens_details"]["cached_tokens"] == 750
+    assert usage["completion_tokens_details"]["reasoning_tokens"] == 250
+
+
+def test_extract_response_insights_normalizes_alternative_usage_keys():
+    """Normalize input_tokens/output_tokens and compute total_tokens when omitted."""
+    response_body = json.dumps(
+        {
+            "id": "chatcmpl-alt",
+            "object": "chat.completion",
+            "model": "claude-sonnet-4",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hi"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "input_tokens": 300,
+                "output_tokens": 120,
+                "cache_read_input_tokens": 200,
+                "cache_creation_input_tokens": 50,
+                "output_tokens_details": {"reasoning_tokens": 40},
+                "thinking_tokens": True,
+            },
+        }
+    ).encode()
+
+    result = openai.extract_response_insights("/v1/chat/completions", response_body)
+
+    assert result is not None
+    usage = result["usage"]
+    assert usage["prompt_tokens"] == 300
+    assert usage["completion_tokens"] == 120
+    assert usage["total_tokens"] == 420
+    assert usage["cache_read_tokens"] == 200
+    assert usage["cache_write_tokens"] == 50
+    assert usage["thinking_tokens"] == 40

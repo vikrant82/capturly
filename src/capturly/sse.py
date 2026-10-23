@@ -259,13 +259,17 @@ def accumulate_sse_event(accumulator, event_lines):
         return
 
     valid_choices = [choice for choice in chunk["choices"] if isinstance(choice, dict)]
-    if not valid_choices:
+    has_usage = isinstance(chunk.get("usage"), dict) and bool(chunk["usage"])
+    if not valid_choices and not accumulator.get("received") and not has_usage:
         return
 
     accumulator["received"] = True
     for field, value in chunk.items():
         if field not in ("choices", "object") and value is not None:
-            if field not in accumulator["top_level"] or accumulator["top_level"][field] is None:
+            if field == "usage":
+                if isinstance(value, dict) and value:
+                    accumulator["top_level"][field] = value
+            elif field not in accumulator["top_level"] or accumulator["top_level"][field] is None:
                 accumulator["top_level"][field] = value
     for choice in valid_choices:
         merge_choice(accumulator, choice)

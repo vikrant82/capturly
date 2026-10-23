@@ -166,3 +166,64 @@ def test_sse_aborted_stream():
 
     assert entry["sse"] is True
     assert entry["sse_error"] == "client_disconnected"
+
+
+def test_sse_stream_final_usage_chunk_with_empty_choices():
+    """Capture final OpenAI SSE usage chunk where choices is empty (stream_options.include_usage)."""
+    chunks_with_empty_choices_usage = [
+        'data: {"id":"chatcmpl-u1","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}],"usage":null}',
+        "",
+        'data: {"id":"chatcmpl-u1","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}],"usage":null}',
+        "",
+        'data: {"id":"chatcmpl-u1","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":45,"total_tokens":165,"prompt_tokens_details":{"cached_tokens":60},"completion_tokens_details":{"reasoning_tokens":15}}}',
+        "",
+        "data: [DONE]",
+        "",
+    ]
+
+    accumulator = sse.new_chunk_accumulator()
+    for event_lines in _parse_sse_lines(chunks_with_empty_choices_usage):
+        sse.accumulate_sse_event(accumulator, event_lines)
+
+    combined = sse.finalize_sse_chunks(accumulator)
+    assert combined is not None
+    assert combined["choices"][0]["message"]["content"] == "Hello world"
+    assert combined["choices"][0]["finish_reason"] == "stop"
+    assert combined["usage"] == {
+        "prompt_tokens": 120,
+        "completion_tokens": 45,
+        "total_tokens": 165,
+        "prompt_tokens_details": {"cached_tokens": 60},
+        "completion_tokens_details": {"reasoning_tokens": 15},
+    }
+
+    request_body = json.dumps(
+        {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Say hello"}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "max_completion_tokens": 1024,
+        }
+    ).encode()
+
+    entry = log_mode.build_combined_sse_log_entry(
+        handler=None,
+        method="POST",
+        path="/v1/chat/completions",
+        request_body=request_body,
+        request_headers={"Content-Type": "application/json"},
+        status_code=200,
+        response_headers={"Content-Type": "text/event-stream"},
+        response_body=combined,
+        started_timestamp_ms=4000,
+        stream_outcome=accumulator["stream_outcome"],
+    )
+
+    assert entry["ai_insights"]["request"]["max_tokens"] == 1024
+    usage = entry["ai_insights"]["response"]["usage"]
+    assert usage["prompt_tokens"] == 120
+    assert usage["completion_tokens"] == 45
+    assert usage["total_tokens"] == 165
+    assert usage["cache_read_tokens"] == 60
+    assert usage["thinking_tokens"] == 15
