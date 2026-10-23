@@ -227,3 +227,117 @@ def test_sse_stream_final_usage_chunk_with_empty_choices():
     assert usage["total_tokens"] == 165
     assert usage["cache_read_tokens"] == 60
     assert usage["thinking_tokens"] == 15
+
+
+def test_sse_openai_responses_api_message_and_reasoning_end_to_end():
+    """OpenAI Responses API SSE events combine into a complete response object with AI insights."""
+    responses_chunks = [
+        'event: response.created\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_01","object":"response","created_at":1776158711,"status":"in_progress","model":"gpt-5.4-2026-03-05","output":[],"usage":null}}\n\n',
+        'event: response.in_progress\ndata: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_01","object":"response","created_at":1776158711,"status":"in_progress","model":"gpt-5.4-2026-03-05","output":[],"usage":null}}\n\n',
+        'event: response.output_item.added\ndata: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_01","type":"reasoning","encrypted_content":"gAAAAAB","summary":[]}}\n\n',
+        'event: response.reasoning_summary_part.added\ndata: {"type":"response.reasoning_summary_part.added","sequence_number":3,"item_id":"rs_01","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}\n\n',
+        'event: response.reasoning_summary_text.delta\ndata: {"type":"response.reasoning_summary_text.delta","sequence_number":4,"item_id":"rs_01","output_index":0,"summary_index":0,"delta":"Thinking "}\n\n',
+        'event: response.reasoning_summary_text.delta\ndata: {"type":"response.reasoning_summary_text.delta","sequence_number":5,"item_id":"rs_01","output_index":0,"summary_index":0,"delta":"carefully."}\n\n',
+        'event: response.reasoning_summary_text.done\ndata: {"type":"response.reasoning_summary_text.done","sequence_number":6,"item_id":"rs_01","output_index":0,"summary_index":0,"text":"Thinking carefully."}\n\n',
+        'event: response.output_item.done\ndata: {"type":"response.output_item.done","sequence_number":7,"output_index":0,"item":{"id":"rs_01","type":"reasoning","encrypted_content":"gAAAAAB","summary":[{"type":"summary_text","text":"Thinking carefully."}]}}\n\n',
+        'event: response.output_item.added\ndata: {"type":"response.output_item.added","sequence_number":8,"output_index":1,"item":{"id":"msg_01","type":"message","status":"in_progress","content":[],"role":"assistant"}}\n\n',
+        'event: response.content_part.added\ndata: {"type":"response.content_part.added","sequence_number":9,"item_id":"msg_01","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":""}}\n\n',
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","sequence_number":10,"item_id":"msg_01","output_index":1,"content_index":0,"delta":"Hello "}\n\n',
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","sequence_number":11,"item_id":"msg_01","output_index":1,"content_index":0,"delta":"from Responses API"}\n\n',
+        'event: response.output_text.done\ndata: {"type":"response.output_text.done","sequence_number":12,"item_id":"msg_01","output_index":1,"content_index":0,"text":"Hello from Responses API"}\n\n',
+        'event: response.content_part.done\ndata: {"type":"response.content_part.done","sequence_number":13,"item_id":"msg_01","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":"Hello from Responses API"}}\n\n',
+        'event: response.output_item.done\ndata: {"type":"response.output_item.done","sequence_number":14,"output_index":1,"item":{"id":"msg_01","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"text":"Hello from Responses API"}],"role":"assistant"}}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","sequence_number":15,"response":{"id":"resp_01","object":"response","created_at":1776158711,"status":"completed","model":"gpt-5.4-2026-03-05","output":[{"id":"rs_01","type":"reasoning","encrypted_content":"gAAAAAB","summary":[{"type":"summary_text","text":"Thinking carefully."}]},{"id":"msg_01","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"text":"Hello from Responses API"}],"role":"assistant"}],"usage":{"input_tokens":11521,"input_tokens_details":{"cached_tokens":1408},"output_tokens":413,"output_tokens_details":{"reasoning_tokens":344},"total_tokens":11934}}}\n\n',
+    ]
+
+    accumulator = sse.new_chunk_accumulator()
+    for event_lines in _parse_sse_lines(responses_chunks):
+        sse.accumulate_sse_event(accumulator, event_lines)
+
+    combined = sse.finalize_sse_chunks(accumulator)
+    assert combined is not None
+    assert combined["object"] == "response"
+    assert combined["id"] == "resp_01"
+    assert combined["model"] == "gpt-5.4-2026-03-05"
+    assert combined["status"] == "completed"
+    assert len(combined["output"]) == 2
+    assert combined["output"][0]["type"] == "reasoning"
+    assert combined["output"][1]["type"] == "message"
+    assert combined["output"][1]["content"][0]["text"] == "Hello from Responses API"
+    assert combined["usage"]["total_tokens"] == 11934
+
+    request_body = json.dumps(
+        {
+            "model": "gpt-5-6-luna",
+            "instructions": "Be concise.",
+            "input": [
+                {
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "System instructions"}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Greet me"}],
+                },
+            ],
+            "max_output_tokens": 4096,
+            "stream": True,
+        }
+    ).encode()
+
+    entry = log_mode.build_combined_sse_log_entry(
+        handler=None,
+        method="POST",
+        path="/awsgpt/deployments/gpt-5-6-luna/v1/responses",
+        request_body=request_body,
+        request_headers={"Content-Type": "application/json"},
+        status_code=200,
+        response_headers={"Content-Type": "text/event-stream"},
+        response_body=combined,
+        started_timestamp_ms=5000,
+        stream_outcome=accumulator["stream_outcome"],
+    )
+
+    assert entry["sse"] is True
+    assert entry["ai_insights"] is not None
+    assert entry["ai_insights"]["protocol"] == "openai_responses"
+    assert entry["ai_insights"]["request"]["model"] == "gpt-5-6-luna"
+    assert entry["ai_insights"]["request"]["max_tokens"] == 4096
+    assert entry["ai_insights"]["request"]["system_prompts"] == [
+        "Be concise.",
+        "System instructions",
+    ]
+    assert entry["ai_insights"]["response"]["model"] == "gpt-5.4-2026-03-05"
+    assert entry["ai_insights"]["response"]["finish_reasons"] == ["completed"]
+    assert entry["ai_insights"]["response"]["assistant_content"] == ["Hello from Responses API"]
+    assert entry["ai_insights"]["response"]["reasoning_summaries"] == ["Thinking carefully."]
+    usage = entry["ai_insights"]["response"]["usage"]
+    assert usage["prompt_tokens"] == 11521
+    assert usage["completion_tokens"] == 413
+    assert usage["total_tokens"] == 11934
+    assert usage["cache_read_tokens"] == 1408
+    assert usage["thinking_tokens"] == 344
+
+
+def test_sse_openai_responses_api_function_call_partial_stream():
+    """OpenAI Responses API function_call deltas reconstruct output even without response.completed."""
+    partial_fc_chunks = [
+        'event: response.created\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_fc","object":"response","created_at":1776158800,"status":"in_progress","model":"gpt-5.4-2026-03-05","output":[],"usage":null}}\n\n',
+        'event: response.output_item.added\ndata: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_01","type":"function_call","status":"in_progress","arguments":"","call_id":"call_xyz","name":"search_code"}}\n\n',
+        'event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"fc_01","output_index":0,"delta":"{\\"query\\":"}\n\n',
+        'event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","sequence_number":3,"item_id":"fc_01","output_index":0,"delta":"\\"responses\\"}"}\n\n',
+    ]
+
+    accumulator = sse.new_chunk_accumulator()
+    for event_lines in _parse_sse_lines(partial_fc_chunks):
+        sse.accumulate_sse_event(accumulator, event_lines)
+
+    combined = sse.finalize_sse_chunks(accumulator)
+    assert combined is not None
+    assert combined["object"] == "response"
+    assert len(combined["output"]) == 1
+    fc_item = combined["output"][0]
+    assert fc_item["type"] == "function_call"
+    assert fc_item["name"] == "search_code"
+    assert fc_item["call_id"] == "call_xyz"
+    assert json.loads(fc_item["arguments"]) == {"query": "responses"}

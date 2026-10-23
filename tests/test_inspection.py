@@ -426,3 +426,202 @@ def test_extract_response_insights_normalizes_alternative_usage_keys():
     assert usage["cache_read_tokens"] == 200
     assert usage["cache_write_tokens"] == 50
     assert usage["thinking_tokens"] == 40
+
+
+def test_extract_request_insights_openai_responses_api():
+    """Extract request insights from OpenAI Responses API (/v1/responses and gateway prefix)."""
+    request_body = json.dumps(
+        {
+            "model": "gpt-5-6-luna",
+            "instructions": "Follow repository conventions.",
+            "max_output_tokens": 16384,
+            "stream": True,
+            "input": [
+                {
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "You are a coding assistant."}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Inspect the project"},
+                        {"type": "input_image", "image_url": "https://example.com/diagram.png"},
+                    ],
+                },
+                {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "list_dir",
+                    "arguments": '{"path":"."}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "README.md\nsrc/",
+                },
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "list_dir",
+                    "description": "List files in a directory",
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                },
+                {
+                    "type": "function",
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                },
+            ],
+        }
+    ).encode()
+
+    result = openai.extract_request_insights(
+        "/awsgpt/deployments/gpt-5-6-luna/v1/responses", request_body
+    )
+
+    assert result is not None
+    assert result["model"] == "gpt-5-6-luna"
+    assert result["stream"] is True
+    assert result["max_tokens"] == 16384
+    assert result["message_count"] == 4
+    assert result["roles"] == ["developer", "user", "assistant", "tool"]
+    assert result["system_prompts"] == [
+        "Follow repository conventions.",
+        "You are a coding assistant.",
+    ]
+    assert result["has_tool_results"] is True
+    assert result["tool_names"] == ["list_dir", "read_file"]
+    assert result["tool_count"] == 2
+
+
+def test_extract_request_insights_openai_responses_string_input():
+    """Extract request insights when OpenAI Responses API input is a plain string."""
+    request_body = json.dumps(
+        {
+            "model": "gpt-5-6-luna",
+            "input": "Hello world",
+        }
+    ).encode()
+
+    result = openai.extract_request_insights("/v1/responses", request_body)
+
+    assert result is not None
+    assert result["model"] == "gpt-5-6-luna"
+    assert result["message_count"] == 1
+    assert result["roles"] == ["user"]
+
+
+def test_extract_response_insights_openai_responses_api():
+    """Extract response insights from an OpenAI Responses API response object."""
+    response_body = json.dumps(
+        {
+            "id": "resp_123",
+            "object": "response",
+            "model": "gpt-5.4-2026-03-05",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "rs_1",
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Checking files first."}],
+                },
+                {
+                    "id": "msg_1",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "I will inspect the directory.",
+                            "annotations": [],
+                        }
+                    ],
+                },
+                {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_abc",
+                    "name": "list_dir",
+                    "arguments": '{"path":"."}',
+                },
+            ],
+            "usage": {
+                "input_tokens": 11521,
+                "input_tokens_details": {"cached_tokens": 1408},
+                "output_tokens": 413,
+                "output_tokens_details": {"reasoning_tokens": 344},
+                "total_tokens": 11934,
+            },
+        }
+    ).encode()
+
+    result = openai.extract_response_insights(
+        "/awsgpt/deployments/gpt-5-6-luna/v1/responses", response_body
+    )
+
+    assert result is not None
+    assert result["model"] == "gpt-5.4-2026-03-05"
+    assert result["finish_reasons"] == ["tool_calls"]
+    assert result["assistant_content"] == ["I will inspect the directory."]
+    assert result["reasoning_summaries"] == ["Checking files first."]
+    assert result["tool_call_names"] == ["list_dir"]
+    assert result["tool_call_count"] == 1
+    usage = result["usage"]
+    assert usage["prompt_tokens"] == 11521
+    assert usage["completion_tokens"] == 413
+    assert usage["total_tokens"] == 11934
+    assert usage["cache_read_tokens"] == 1408
+    assert usage["thinking_tokens"] == 344
+
+
+def test_build_and_ensure_ai_insights_for_openai_responses_entry():
+    """build_ai_insights sets protocol='openai_responses' and ensure_ai_insights backfills missing ai_insights."""
+    from capturly import inspection
+
+    entry = {
+        "method": "POST",
+        "path": "/awsgpt/deployments/gpt-5-6-luna/v1/responses",
+        "status_code": 200,
+        "sse": True,
+        "sse_combine_status": "completed",
+        "request_body": {
+            "model": "gpt-5-6-luna",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]}],
+            "max_output_tokens": 2048,
+            "stream": True,
+        },
+        "response_body": {
+            "id": "resp_99",
+            "object": "response",
+            "model": "gpt-5.4-2026-03-05",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "msg_99",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Hello!"}],
+                }
+            ],
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "total_tokens": 60,
+            },
+        },
+    }
+
+    backfilled = inspection.ensure_ai_insights(entry)
+    assert backfilled is not None
+    assert entry["ai_insights"] is backfilled
+    assert backfilled["protocol"] == "openai_responses"
+    assert backfilled["request"]["model"] == "gpt-5-6-luna"
+    assert backfilled["request"]["max_tokens"] == 2048
+    assert backfilled["response"]["model"] == "gpt-5.4-2026-03-05"
+    assert backfilled["response"]["usage"]["total_tokens"] == 60
+    assert backfilled["response"]["assistant_content"] == ["Hello!"]

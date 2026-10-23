@@ -417,8 +417,10 @@ function msgPlainText(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content.map(function(part) {
-      if (part.type === 'text') return part.text || '';
+      if (!part || typeof part !== 'object') return String(part);
+      if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text' || part.type === 'summary_text') return part.text || '';
       if (part.type === 'image_url') return '[Image: ' + String((part.image_url && part.image_url.url) || '').substring(0, 80) + ']';
+      if (part.type === 'input_image') return '[Image: ' + String((typeof part.image_url === 'string' ? part.image_url : (part.image_url && part.image_url.url)) || '').substring(0, 80) + ']';
       return JSON.stringify(part);
     }).join('\n');
   }
@@ -478,7 +480,7 @@ function renderMessage(msg) {
 
 function renderBedrockContent(content) {
   if (!Array.isArray(content) || !content.some(function(block) {
-    return block && typeof block === 'object' && Object.keys(block).some(function(key) {
+    return block && typeof block === 'object' && typeof block.type !== 'string' && Object.keys(block).some(function(key) {
       return ['text', 'image', 'document', 'video', 'audio', 'toolUse', 'toolResult',
         'reasoningContent', 'guardContent', 'cachePoint', 'searchResult', 'citationsContent'].indexOf(key) !== -1;
     });
@@ -688,6 +690,7 @@ function extractMaxTokens(aiReq, req) {
   var inf = (req && req.inferenceConfig && typeof req.inferenceConfig === 'object') ? req.inferenceConfig : {};
   return firstFiniteInt([
     aiReq && aiReq.max_tokens,
+    req && req.max_output_tokens,
     req && req.max_completion_tokens,
     req && req.max_tokens,
     inf.maxTokens,
@@ -812,6 +815,7 @@ function renderAIMeta(e) {
   var modelName = aiReq.model || req.model || req.modelId || aiRes.model || res.model || res.modelId || '-';
   var html = '<div class="ai-meta">';
   if (ai.protocol === 'bedrock_converse') html += metaItem('Protocol', 'Bedrock Converse');
+  else if (ai.protocol === 'openai_responses' || (res && res.object === 'response')) html += metaItem('Protocol', 'OpenAI Responses');
   html += metaItem('Model', modelName);
   var stats = extractUsageStats(aiRes.usage) || extractUsageStats(res.usage);
   var maxTokens = extractMaxTokens(aiReq, req);
@@ -869,6 +873,81 @@ function renderChoices(choices) {
   return respHtml;
 }
 
+function normalizeResponsesInput(req) {
+  if (!req || req.input == null) return [];
+  if (typeof req.input === 'string') return [{ role: 'user', content: req.input }];
+  if (!Array.isArray(req.input)) return [];
+  var out = [];
+  req.input.forEach(function(item) {
+    if (!item || typeof item !== 'object') return;
+    var role = item.role;
+    if (role === 'system' || role === 'developer') return;
+    var itemType = item.type;
+    if (itemType === 'function_call') {
+      out.push({
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: item.call_id || item.id || '',
+          type: 'function',
+          function: {
+            name: item.name || 'unknown',
+            arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}),
+          },
+        }],
+      });
+    } else if (itemType === 'function_call_output') {
+      out.push({
+        role: 'tool',
+        tool_call_id: item.call_id || item.id || '',
+        content: item.output != null ? item.output : '',
+      });
+    } else if (role) {
+      out.push({
+        role: role,
+        content: item.content != null ? item.content : '',
+      });
+    }
+  });
+  return out;
+}
+
+function renderResponsesOutput(outputItems) {
+  if (!Array.isArray(outputItems) || !outputItems.length) return '';
+  var html = '';
+  outputItems.forEach(function(item) {
+    if (!item || typeof item !== 'object') return;
+    if (item.type === 'reasoning') {
+      var summaryParts = Array.isArray(item.summary) ? item.summary : [];
+      var summaryText = msgPlainText(summaryParts);
+      if (summaryText) {
+        html += '<div class="msg assistant"><div class="msg-role">reasoning</div><div class="msg-content">' + renderLongText(summaryText) + '</div></div>';
+      } else if (item.encrypted_content) {
+        html += '<div class="msg assistant"><div class="msg-role">reasoning (encrypted)</div><div class="msg-content"><span style="color:#8b949e">[encrypted reasoning content]</span></div></div>';
+      }
+    } else if (item.type === 'message' || item.role === 'assistant') {
+      var text = msgPlainText(item.content);
+      if (text) {
+        html += '<div class="msg assistant"><div class="msg-role">' + esc(item.role || 'assistant') + '</div><div class="msg-content">' + renderLongText(text) + '</div></div>';
+      }
+    } else if (item.type === 'function_call') {
+      var tc = [{
+        id: item.call_id || item.id || '',
+        type: 'function',
+        function: {
+          name: item.name || 'unknown',
+          arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}),
+        },
+      }];
+      html += '<div class="msg assistant"><div class="msg-role">assistant (tool call'
+        + (item.call_id ? ': ' + esc(item.call_id) : '') + ')</div>' + renderToolCalls(tc) + '</div>';
+    } else {
+      html += '<div class="content-block">' + renderJsonTree(item) + '</div>';
+    }
+  });
+  return html;
+}
+
 function registerAISections(e) {
   var bedrock = e.ai_insights && e.ai_insights.protocol === 'bedrock_converse';
   var aiReq = (e.ai_insights && e.ai_insights.request) || {};
@@ -886,8 +965,11 @@ function registerAISections(e) {
   if (tools.length) {
     sectionRenderers['tools'] = function() { return renderTools(tools); };
   }
-  var messages = (Array.isArray(req.messages) ? req.messages : []).filter(function(m) {
-    return m && typeof m === 'object' && m.role !== 'system';
+  var rawMessages = (Array.isArray(req.messages) && req.messages.length)
+    ? req.messages
+    : normalizeResponsesInput(req);
+  var messages = rawMessages.filter(function(m) {
+    return m && typeof m === 'object' && m.role !== 'system' && m.role !== 'developer';
   });
   // Turn-aware split: new inputs are the messages added after the last
   // assistant turn (a user message, or one-or-more tool results); history
@@ -908,12 +990,19 @@ function registerAISections(e) {
     sectionRenderers['messages-history'] = function() { return history.map(renderMessage).join(''); };
   }
   var choices = Array.isArray(res.choices) ? res.choices : [];
+  var responsesOutput = (!bedrock && Array.isArray(res.output)) ? res.output : [];
   var nativeMessage = bedrock && res.output && res.output.message;
   if (bedrock && !nativeMessage && e.ai_insights.response) nativeMessage = e.ai_insights.response.message;
+  var hasAssistantResponse = false;
   if (bedrock && nativeMessage && typeof nativeMessage === 'object') {
     sectionRenderers['assistant-response'] = function() { return renderMessage(nativeMessage); };
+    hasAssistantResponse = true;
   } else if (choices.length) {
     sectionRenderers['assistant-response'] = function() { return renderChoices(choices); };
+    hasAssistantResponse = true;
+  } else if (responsesOutput.length) {
+    sectionRenderers['assistant-response'] = function() { return renderResponsesOutput(responsesOutput); };
+    hasAssistantResponse = true;
   }
   if (e.sse && e.sse_combine_status) {
     sectionRenderers['sse-info'] = function() {
@@ -939,6 +1028,8 @@ function registerAISections(e) {
     newInputs: newInputs,
     history: history,
     choices: choices,
+    responsesOutput: responsesOutput,
+    hasAssistantResponse: hasAssistantResponse,
   };
 }
 
@@ -1059,7 +1150,7 @@ function renderDetail(e) {
     if (parts.history.length) {
       html += collapsible('&#x1F4DA; Messages History (' + parts.history.length + ')', 'messages-history');
     }
-    if (parts.choices.length) html += collapsible('&#x1F916; Assistant Response', 'assistant-response');
+    if (parts.hasAssistantResponse || parts.choices.length) html += collapsible('&#x1F916; Assistant Response', 'assistant-response');
     else if (e.ai_insights.protocol === 'bedrock_converse') {
       var bedrockResponse = bedrockResponseBody(e);
       var bedrockMessage = bedrockResponse.output && bedrockResponse.output.message;

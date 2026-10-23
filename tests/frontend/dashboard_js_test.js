@@ -440,10 +440,132 @@ const fallbackUsageHtml = vm.runInContext(
 assert(fallbackUsageHtml.includes('80 prompt + 20 completion = 100 total'),
   'empty ai_insights.response.usage falls back to valid response_body.usage');
 
+// --- OpenAI Responses API rendering ---
+const responsesEntry = {
+  method: 'POST', path: '/awsgpt/deployments/gpt-5-6-luna/v1/responses', status_code: 200,
+  timestamp_ms: 9000, duration_ms: 42, request_body_size: 120, response_body_size: 240,
+  sse: true, sse_combine_status: 'completed', sse_duration_ms: 40,
+  ai_insights: {
+    protocol: 'openai_responses',
+    request: {
+      model: 'gpt-5-6-luna',
+      message_count: 4,
+      roles: ['developer', 'user', 'assistant', 'tool'],
+      system_prompts: ['You are a helpful coding agent.'],
+      stream: true,
+      has_tool_results: true,
+      tool_names: ['list_dir'],
+      tool_count: 1,
+    },
+    response: {
+      model: 'gpt-5.4-2026-03-05',
+      usage: {
+        input_tokens: 11521,
+        input_tokens_details: { cached_tokens: 1408 },
+        output_tokens: 413,
+        output_tokens_details: { reasoning_tokens: 344 },
+        total_tokens: 11934,
+        prompt_tokens: 11521,
+        completion_tokens: 413,
+        cache_read_tokens: 1408,
+        thinking_tokens: 344,
+      },
+      finish_reasons: ['completed', 'tool_calls'],
+      assistant_content: ['Here are the files in the directory.'],
+      tool_call_names: ['list_dir'],
+      tool_call_count: 1,
+    },
+  },
+  request_body: {
+    model: 'gpt-5-6-luna',
+    max_output_tokens: 16384,
+    stream: true,
+    input: [
+      { role: 'developer', content: [{ type: 'input_text', text: 'You are a helpful coding agent.' }] },
+      { role: 'user', content: [{ type: 'input_text', text: 'RESPONSES_HISTORY_USER_MARKER' }] },
+      { type: 'function_call', id: 'fc_1', call_id: 'call_101', name: 'list_dir', arguments: '{"path":"."}' },
+      { type: 'function_call_output', call_id: 'call_101', output: 'RESPONSES_TOOL_OUTPUT_MARKER' },
+    ],
+    tools: [
+      {
+        type: 'function',
+        name: 'list_dir',
+        description: 'List directory contents',
+        parameters: { type: 'object', properties: { path: { type: 'string' } } },
+      },
+    ],
+  },
+  response_body: {
+    id: 'resp_01',
+    object: 'response',
+    model: 'gpt-5.4-2026-03-05',
+    status: 'completed',
+    output: [
+      {
+        id: 'rs_01',
+        type: 'reasoning',
+        encrypted_content: 'gAAAAAB',
+        summary: [{ type: 'summary_text', text: 'RESPONSES_REASONING_SUMMARY_MARKER' }],
+      },
+      {
+        id: 'msg_01',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'Here are the files in the directory.', annotations: [] }],
+      },
+      {
+        id: 'fc_02',
+        type: 'function_call',
+        call_id: 'call_202',
+        name: 'read_file',
+        arguments: '{"path":"README.md"}',
+      },
+    ],
+    usage: {
+      input_tokens: 11521,
+      input_tokens_details: { cached_tokens: 1408 },
+      output_tokens: 413,
+      output_tokens_details: { reasoning_tokens: 344 },
+      total_tokens: 11934,
+    },
+  },
+  request_headers: {}, response_headers: {},
+};
+const responsesDetail = vm.runInContext(
+  'renderDetail(' + JSON.stringify(responsesEntry) + ')', sandbox);
+assert(responsesDetail.includes('OpenAI Responses'), 'OpenAI Responses protocol badge is visible');
+assert(responsesDetail.includes('gpt-5-6-luna'), 'OpenAI Responses model is visible');
+assert(responsesDetail.includes('11521 prompt + 413 completion = 11934 total'), 'OpenAI Responses token summary is visible');
+assert(responsesDetail.includes('<span class="meta-key">Max Output:</span> <span class="meta-val">16,384</span>'),
+  'OpenAI Responses max_output_tokens renders as Max Output');
+assert(responsesDetail.includes('11,934 / 400,000 (3%)'),
+  'gpt-5-6-luna defaults to 400k context window');
+assert(responsesDetail.includes('New Inputs (1 &middot; tool)'),
+  'Responses API function_call_output after function_call is treated as new tool input');
+assert(responsesDetail.includes('Messages History (2)'),
+  'Responses API user message and function_call are placed in history');
+assert(responsesDetail.includes('data-section="assistant-response"'),
+  'Responses API output array registers assistant-response section');
+
+const responsesNewInputs = vm.runInContext("sectionRenderers['new-inputs']()", sandbox);
+assert(responsesNewInputs.includes('RESPONSES_TOOL_OUTPUT_MARKER') && responsesNewInputs.includes('call_101'),
+  'Responses API function_call_output renders with call_id and output text');
+const responsesHistory = vm.runInContext("sectionRenderers['messages-history']()", sandbox);
+assert(responsesHistory.includes('RESPONSES_HISTORY_USER_MARKER') && responsesHistory.includes('list_dir'),
+  'Responses API history renders input_text cleanly and function_call as tool card');
+assert(!responsesHistory.includes('"type": "input_text"'),
+  'Responses API input_text parts render as plain text, not raw JSON');
+const responsesAssistant = vm.runInContext("sectionRenderers['assistant-response']()", sandbox);
+assert(responsesAssistant.includes('RESPONSES_REASONING_SUMMARY_MARKER'),
+  'Responses API reasoning summary renders in assistant response');
+assert(responsesAssistant.includes('Here are the files in the directory.'),
+  'Responses API message output_text renders in assistant response');
+assert(responsesAssistant.includes('read_file') && responsesAssistant.includes('call_202'),
+  'Responses API function_call output item renders in assistant response');
+
 if (failures > 0) {
   console.error(failures + ' assertion(s) failed');
   process.exit(1);
 }
 console.log('SMOKE OK');
-
-
